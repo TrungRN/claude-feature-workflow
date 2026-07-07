@@ -49,46 +49,94 @@ kiểm lại, không tin lời tự khai.
 
 ## 2. Cài đặt
 
-### Tình huống A — repo bình thường (phổ biến nhất)
+**Bản chất chỉ là copy 2 thứ** từ repo này sang nơi bạn muốn dùng:
 
-Copy 2 thư mục vào repo của bạn:
+| Copy cái gì | Từ (repo này) | Sang (nơi muốn dùng) |
+| --- | --- | --- |
+| Thư mục skill | `.claude/skills/feature-workflow/` | `<đích>/.claude/skills/feature-workflow/` |
+| 4 file agent `task-*.md` | `.claude/agents/` | `<đích>/.claude/agents/` |
+
+`<đích>` = repo của bạn, hoặc thư mục `agent-knowledge-base` nếu bạn dùng KB. Cấu trúc sau
+khi copy phải giống hệt bên nguồn. Chọn 1 trong 3 cách dưới đây — kết quả như nhau.
+
+### Cách 1 — Nhờ Claude Code cài hộ (dễ nhất, không cần biết terminal) ⭐
+
+Bạn đã có Claude Code rồi — cứ để nó tự làm. Mở Claude Code ở đâu cũng được, dán câu này và
+sửa 2 đường dẫn cho đúng máy bạn:
+
+> Hãy cài feature-workflow cho tôi: copy thư mục `.claude/skills/feature-workflow` và 4 file
+> `.claude/agents/task-*.md` từ `<đường-dẫn-tới-claude-feature-workflow>` sang
+> `<đường-dẫn-tới-repo-đích>/.claude/` (giữ nguyên cấu trúc; nếu đích đã có
+> `skills/feature-workflow` thì xóa bản cũ trước). Xong thì so sánh lại 2 bên để xác nhận
+> giống hệt nhau.
+
+> 💡 Không nhớ đường dẫn? Kéo-thả thư mục từ File Explorer/Finder vào cửa sổ Claude Code /
+> terminal — đường dẫn sẽ tự hiện ra.
+
+### Cách 2 — Copy tay bằng File Explorer (Windows) / Finder (macOS)
+
+1. **Hiện thư mục ẩn** (thư mục `.claude` bắt đầu bằng dấu chấm nên mặc định bị ẩn):
+   - Windows: mở File Explorer → tab **View** → **Show** → tick **Hidden items**.
+   - macOS: trong Finder nhấn **Cmd + Shift + .** (dấu chấm).
+2. Mở thư mục `claude-feature-workflow` → vào `.claude` → vào `skills` → **copy thư mục
+   `feature-workflow`**.
+3. Sang repo đích: nếu chưa có thư mục `.claude` thì tạo mới (đặt tên có cả dấu chấm đầu);
+   trong đó tạo/mở thư mục `skills` rồi **paste**. Nếu đã có `feature-workflow` cũ ở đó, xóa
+   nó trước khi paste.
+4. Quay lại nguồn, vào `.claude/agents` → chọn **4 file** `task-executor.md`,
+   `task-executor-pro.md`, `task-verifier.md`, `task-verifier-pro.md` → copy → paste vào
+   `<đích>/.claude/agents/` (tạo thư mục nếu chưa có).
+
+   > ⚠️ Copy **4 file lẻ**, đừng copy đè cả thư mục `agents` — trên macOS, paste một thư mục
+   > trùng tên sẽ **thay thế toàn bộ**, làm mất các agent khác sẵn có ở đích (như
+   > `kb-auditor` trong KB).
+
+### Cách 3 — Terminal (cho ai quen dòng lệnh)
+
+macOS / Linux (bash):
 
 ```bash
 SRC=path/to/claude-feature-workflow
-REPO=path/to/your-repo
+DICH=path/to/repo-dich          # repo của bạn, hoặc agent-knowledge-base
 
-mkdir -p "$REPO/.claude"
-cp -R "$SRC/.claude/skills"  "$REPO/.claude/"
-cp -R "$SRC/.claude/agents"  "$REPO/.claude/"
+mkdir -p "$DICH/.claude/skills" "$DICH/.claude/agents"
+rm -rf "$DICH/.claude/skills/feature-workflow"
+cp -R "$SRC/.claude/skills/feature-workflow" "$DICH/.claude/skills/"
+cp "$SRC"/.claude/agents/task-*.md "$DICH/.claude/agents/"
 ```
 
-Khởi động lại Claude Code trong repo đó. Xong — không cần cấu hình gì.
+Windows (PowerShell):
 
-> Tuỳ chọn: muốn có "hàng rào" chặn agent sửa file ngoài vùng cho phép, copy thêm
-> `.claude/hooks/guard-paths.sh` + gộp `settings.json` (xem mục 6.3).
+```powershell
+$SRC  = "C:\path\to\claude-feature-workflow"
+$DICH = "C:\path\to\repo-dich"
 
-### Tình huống B — workspace nhiều repo có agent-knowledge-base
-
-KB đã tích hợp sẵn (skill + agents + alias `/kb-feature` + host contract). Khi cần cập nhật
-bản mới từ repo này:
-
-```bash
-SRC=path/to/claude-feature-workflow
-KB=path/to/agent-knowledge-base
-
-rm -rf "$KB/.claude/skills/feature-workflow"
-cp -R "$SRC/.claude/skills/feature-workflow" "$KB/.claude/skills/"
-cp "$SRC"/.claude/agents/task-*.md "$KB/.claude/agents/"
+New-Item -ItemType Directory -Force "$DICH\.claude\skills", "$DICH\.claude\agents" | Out-Null
+Remove-Item -Recurse -Force "$DICH\.claude\skills\feature-workflow" -ErrorAction SilentlyContinue
+Copy-Item -Recurse "$SRC\.claude\skills\feature-workflow" "$DICH\.claude\skills\"
+Copy-Item "$SRC\.claude\agents\task-*.md" "$DICH\.claude\agents\"
 ```
 
-Kiểm tra đã đồng bộ: `diff -r "$SRC/.claude/skills/feature-workflow" "$KB/.claude/skills/feature-workflow"`
-→ không in gì là chuẩn. Sau đó chạy `/kb-install-root` trong KB để làm mới bản copy ở
-workspace root (nếu bạn dùng tính năng đó).
+### Sau khi copy (mọi cách)
 
-### Tình huống C — KB/host kiến trúc khác
+1. **Khởi động lại Claude Code** trong repo đích để nó nạp skill/agents mới.
+2. Kiểm tra: hỏi Claude *"What skills and agents are available?"* — phải thấy
+   `feature-workflow` và 4 agent `task-*`.
+3. **Cập nhật bản mới sau này**: lặp lại đúng các bước trên (copy đè). Muốn chắc chắn hai
+   bên khớp nhau, hỏi Claude: *"So sánh `<nguồn>/.claude/skills/feature-workflow` với
+   `<đích>/.claude/skills/feature-workflow`, có giống hệt nhau không?"*
 
-Copy như tình huống A, rồi khai báo một "host contract" trong `CLAUDE.md` của host — xem
-mục 6.1.
+### Ghi chú theo từng loại đích
+
+- **Repo bình thường**: xong 2 bước trên là chạy — không cần cấu hình gì. Tuỳ chọn: muốn có
+  "hàng rào" chặn agent sửa file ngoài vùng cho phép, copy thêm `.claude/hooks/guard-paths.sh`
+  + gộp `settings.json` (xem mục 6.3).
+- **agent-knowledge-base**: KB đã tích hợp sẵn (alias `/kb-feature` + host contract), nên
+  copy chỉ là để **cập nhật bản mới**. Đừng copy `hooks/` và `settings.json` vào KB — KB có
+  guardrail riêng. Copy xong, chạy `/kb-install-root` trong KB để làm mới bản engine ở
+  workspace root (nếu bạn dùng tính năng đó).
+- **KB/host kiến trúc khác**: copy như trên, rồi khai báo thêm một "host contract" trong
+  `CLAUDE.md` của host — xem mục 6.1.
 
 ---
 
