@@ -142,10 +142,16 @@ Copy-Item "$SRC\.claude\agents\task-*.md" "$DICH\.claude\agents\"
 
 ## 3. Cách dùng — 3 bước
 
-**Bước 1 — Lập kế hoạch.** Mở Claude Code, mô tả tính năng (hoặc dán URD):
+**Bước 1 — Lập kế hoạch.** Mở Claude Code, gọi skill theo một trong hai cách — cách nào
+cũng chạy ở **mọi nơi** đã cài skill (repo đơn lẻ hay KB đều như nhau):
 
-> *"Plan this feature: thêm đăng nhập bằng Google"*
-> (trong KB thì gõ: `/kb-feature "thêm đăng nhập bằng Google"`)
+> Gõ lệnh: `/feature-workflow "thêm đăng nhập bằng Google"`
+>
+> Hoặc nói tự nhiên: *"Plan this feature: thêm đăng nhập bằng Google"* (dán URD/ticket kèm ý
+> định làm là skill tự kích hoạt, không cần lệnh)
+
+Riêng trong `agent-knowledge-base` có thêm alias `/kb-feature "<mô tả>"` — tác dụng y hệt,
+chỉ là tên quen tay theo bộ lệnh `/kb-*` của KB đó.
 
 Skill sẽ hỏi nếu có gì mơ hồ, rồi tạo:
 
@@ -239,6 +245,12 @@ Thêm vào `CLAUDE.md` của host mục sau, điền đủ 5 ý:
 
 Ví dụ thật, đang chạy: mục cùng tên trong `CLAUDE.md` của `agent-knowledge-base`.
 
+Muốn có lệnh gọi tên riêng theo bộ lệnh của host (kiểu `/kb-feature` của agent-kb)? Tạo một
+file command mỏng ở `<host>/.claude/commands/<tên-alias>.md` với nội dung: đọc mục host
+contract trong `CLAUDE.md` của host rồi invoke skill `feature-workflow` với `$ARGUMENTS`.
+Đây chỉ là tiện ích tuỳ chọn — không có alias thì `/feature-workflow` và mô tả tự nhiên vẫn
+luôn hoạt động.
+
 ### 6.2. Chiến lược model — vì sao không "Opus review tất cả cho chắc"?
 
 Phân tầng theo task: việc cơ học → Haiku, việc khó → Sonnet, review rủi ro cao → Opus.
@@ -273,8 +285,10 @@ file mới, Definition of Done kiểm được bằng mắt/lệnh, self-check l
 
 ## 7. Hỏi nhanh
 
-- **Phải gõ đúng lệnh gì để kích hoạt?** Không cần lệnh — mô tả tính năng kèm ý định làm là
-  skill tự vào việc. Trong KB có alias `/kb-feature "<mô tả>"`.
+- **Phải gõ đúng lệnh gì để kích hoạt?** Lệnh universal (mọi nơi đã cài skill) là
+  `/feature-workflow "<mô tả>"`. Không gõ lệnh cũng được — mô tả tính năng kèm ý định làm là
+  skill tự vào việc. `/kb-feature` chỉ là alias có sẵn trong `agent-knowledge-base`; host
+  khác không có (trừ khi bạn tự tạo, xem mục 6.1).
 - **Đang chạy giữa chừng thì tắt máy?** Không sao. Trạng thái từng task nằm trong PLAN.md;
   mở lại và bảo "tiếp tục plans/<slug>".
 - **Thiếu agents thì sao?** Skill sẽ báo và đề nghị: cài từ gói này, hoặc chạy chế độ
