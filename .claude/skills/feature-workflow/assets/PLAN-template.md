@@ -8,7 +8,8 @@ _Drafted: <YYYY-MM-DD> · Status: draft | awaiting-approval | executing | done |
 ## Environment
 <!-- Phase 0 facts — lets a later session resume execution without re-deriving them. -->
 - Mode: single-repo | kb-workspace
-- Plans root: <path>
+- Host root: <absolute path — every path below is relative to this>
+- Plans root: <path under the host root>
 - Code paths in specs are relative to: <repo root | KB root, as `../<repo>/…`>
 - Write guard: none | <unlock/lock procedure per the host contract>
 - After merge (host steps): <e.g. refresh KB, rebuild relationships, record ADR | none>

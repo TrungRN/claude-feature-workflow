@@ -28,28 +28,36 @@ The feature request comes from the invocation arguments; if empty, ask the user 
 
 ## Phase 0 — Detect the host environment
 
-This skill is installed unmodified into different hosts. Before anything else, settle the five
-environment facts below and record them in PLAN.md's `## Environment` section (so a later
-session can resume execution without re-deriving them):
+This skill is installed unmodified into different hosts, and may be invoked **away from the
+host's root** (e.g. from a workspace root that received a copy of the engine, where the host's
+CLAUDE.md was never auto-loaded). Before anything else, settle the five environment facts below
+and record them in PLAN.md's `## Environment` section (so a later session can resume execution
+without re-deriving them):
 
 1. **mode** — `single-repo` or `kb-workspace`.
-2. **plans root** — where `plans/<feature-slug>/` lives.
+2. **host root & plans root** — which directory owns the workflow (record it as an absolute
+   path; every other path is relative to it), and where `plans/<feature-slug>/` lives under it.
 3. **code-path convention** — what paths in task specs are relative to.
 4. **write guard** — any hook blocking writes, and its documented unlock/lock procedure.
 5. **analysis sources** — what to read to find impact and conventions.
 
 Resolve them in this order:
 
-- **Host contract (highest priority).** If the project's `CLAUDE.md` (auto-loaded) or a doc it
-  references contains a **"Feature-workflow host contract"** section, follow it exactly — it
-  states all five facts. This is how a knowledge base (or any custom host) plugs this skill in
-  without modifying it.
-- **KB heuristic.** No contract, but the current project describes sibling repos (a repo
-  index/map, cross-repo relationship or impact docs, per-repo overviews/manifests at `../`)
-  → `kb-workspace`: plans in `<kb>/plans/`, code paths as `../<repo>/…` relative to the KB
-  root, analysis through the KB's own docs (cheapest first).
-- **Default.** Otherwise → `single-repo`: plans in `<repo>/plans/`, code paths relative to the
-  repo root, analysis directly on the codebase.
+- **Host contract (highest priority).** A **"Feature-workflow host contract"** section states
+  all five facts; hosts publish it in their `CLAUDE.md`. This is how a knowledge base (or any
+  custom host) plugs this skill in without modifying it. The contract may already be in your
+  context (the host's CLAUDE.md auto-loaded, or a wrapper command that read it for you). If
+  not, **probe for it** before assuming there is none:
+  `grep -l "Feature-workflow host contract" CLAUDE.md */CLAUDE.md ../*/CLAUDE.md 2>/dev/null`
+  Exactly one hit → that file's directory is the **host root**; read the section and follow it
+  exactly. Several hits → ask the user which host to use.
+- **KB heuristic.** No contract, but a directory at `.`, `./*/`, or `../*/` looks like a
+  knowledge base describing sibling repos (a repo index/map, cross-repo relationship or impact
+  docs, per-repo overviews/manifests) → `kb-workspace` with that directory as host root: plans
+  in `<kb>/plans/`, code paths as `../<repo>/…` relative to the KB root, analysis through the
+  KB's own docs (cheapest first).
+- **Default.** Otherwise → `single-repo`: the current repo is the host root; plans in
+  `<repo>/plans/`, code paths relative to the repo root, analysis directly on the codebase.
 
 ## Ground rules (all modes)
 

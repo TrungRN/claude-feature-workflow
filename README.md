@@ -1,156 +1,235 @@
-# Feature Workflow — skill universal cho Claude Code
+# Feature Workflow
 
-**Đây là bản gốc (source of truth).** Skill `feature-workflow` + 4 subagent chạy được **không
-sửa đổi** trong mọi loại host:
+> Skill cho Claude Code: đưa một yêu cầu tính năng đi từ **mô tả → kế hoạch → testcase →
+> code → kiểm định**, trong đó model mạnh chỉ lo phần khó (lập kế hoạch), còn phần gõ code
+> giao cho model rẻ hơn — nên **nhanh hơn và tiết kiệm token hơn** so với để một session
+> mạnh tự làm hết.
+>
+> **Đây là repo gốc (source of truth).** Muốn dùng ở đâu thì copy sang đó (hướng dẫn bên
+> dưới). Muốn nâng cấp thì sửa ở đây rồi copy lại — **không bao giờ sửa bản copy.**
 
-1. **Repo đơn lẻ** (không có knowledge base) — mặc định, không cần cấu hình gì.
-2. **agent-knowledge-base** (KB đa-repo) — KB khai báo một *host contract* trong `CLAUDE.md`.
-3. **KB kiến trúc khác / host tùy biến** — chỉ cần tự khai báo host contract tương tự.
+---
 
-Quy trình bảo trì: **sửa ở đây → copy nguyên xi sang nơi dùng.** Không bao giờ sửa bản copy.
-
-## Workflow
-
-**Model mạnh lập kế hoạch → testcase chốt trước → executor đúng tầng thực thi → verifier kiểm
-định độc lập:**
-
-- **Skill `feature-workflow`** (session chính — Sonnet/Opus): nhận diện môi trường (Phase 0) →
-  đọc yêu cầu → phân tích ảnh hưởng (qua KB nếu có, rẻ hơn nhiều đọc code thô) → viết
-  `testcases.md` **trước** → chia task nhỏ tự-đủ context → dừng chờ duyệt → điều phối thực thi.
-- **`task-executor`** (Haiku): task cơ học/bounded. **`task-executor-pro`** (Sonnet): task có
-  logic/mơ hồ/tạo mới component.
-- **`task-verifier`** (Sonnet, read-only): kiểm định độc lập, chỉ PASS/FAIL kèm bằng chứng.
-  **`task-verifier-pro`** (Opus, read-only): dành riêng cho task `risk: high`.
-
-Trái tim của hệ thống là chuẩn task spec (`references/task-spec-standard.md`): mỗi task phải
-tự-đủ để executor làm đúng mà không cần mở file nào không được trích trong spec — **kể cả
-convention**, vì subagent không kế thừa CLAUDE.md/KB/memory.
-
-## Vì sao một skill chạy được mọi nơi (Phase 0 + host contract)
-
-Khi khởi động, skill chốt 5 dữ kiện môi trường và ghi vào mục `## Environment` của `PLAN.md`
-(để session sau resume được): **mode** (single-repo | kb-workspace), **plans root**, **quy ước
-đường dẫn code**, **write guard** (nếu có, kèm thủ tục mở/đóng khóa), **nguồn phân tích**.
-
-Thứ tự nhận diện:
-
-1. **Host contract** — nếu `CLAUDE.md` của project chứa mục **"Feature-workflow host
-   contract"**, skill theo đúng mục đó. Đây là cách một KB "cắm" skill vào mà không sửa skill.
-2. **Heuristic KB** — không có contract nhưng project trông như một KB mô tả các repo anh em
-   (index, relationships, overview/manifest) → mode `kb-workspace`.
-3. **Mặc định** — `single-repo`: plans ở `<repo>/plans/`, path tính từ gốc repo, phân tích
-   thẳng codebase.
-
-### Đặc tả host contract (cho KB kiến trúc khác)
-
-Thêm vào `CLAUDE.md` của host một mục như sau (nội dung tùy host, đủ 5 dữ kiện):
-
-```markdown
-### Feature-workflow host contract
-<!-- Read by the feature-workflow skill (Phase 0). -->
-- Mode: kb-workspace
-- Plans root: plans/<feature-slug>/ in this repo
-- Code paths in specs: ../<repo>/…, relative to this repo's root
-- Analysis sources: <đọc gì, theo thứ tự nào, lệnh test lấy ở đâu>
-- Testcase template: <path, nếu muốn dùng template riêng thay assets/testcases-template.md>
-- Write guard: <hook nào chặn ghi + thủ tục mở/đóng khóa; hoặc "none">
-- After merge: <các bước hậu-merge của host; hoặc "none">
-```
-
-Ví dụ hoàn chỉnh: xem mục cùng tên trong `CLAUDE.md` của `agent-knowledge-base` (plans root
-trong KB, path `../<repo>/…`, unlock bằng `plans/.execution-grant`, hậu-merge `/kb-update` +
-`/kb-link`).
-
-## Cài đặt
-
-### Repo đơn lẻ
-
-Chép vào gốc repo:
+## 1. Nó hoạt động thế nào? (nhìn 1 phút là hiểu)
 
 ```
-<repo>/.claude/
-├── skills/feature-workflow/    # bắt buộc
-├── agents/task-*.md            # bắt buộc (4 file)
-├── hooks/guard-paths.sh        # tùy chọn — hook mẫu chặn ghi ngoài allowlist (mode warn)
-└── settings.json               # tùy chọn — khai báo hook trên (gộp nếu đã có file này)
+Bạn: "Làm tính năng X" (dán URD/ticket cũng được)
+        │
+        ▼
+┌─ LẬP KẾ HOẠCH (session chính — model mạnh) ─────────────────┐
+│ 1. Hiểu yêu cầu, hỏi lại nếu mơ hồ                           │
+│ 2. Phân tích phần code bị ảnh hưởng                          │
+│ 3. Viết TESTCASE TRƯỚC (chưa code gì cả)                     │
+│ 4. Chia việc thành các task nhỏ, mỗi task một file spec      │
+│    "tự-đủ" — đọc mỗi spec là làm được, không cần mở gì thêm  │
+└──────────────────────────────────────────────────────────────┘
+        │
+        ▼
+   ⛔ DỪNG — bạn duyệt kế hoạch + testcase rồi mới đi tiếp
+        │
+        ▼
+┌─ THỰC THI (các subagent) ────────────────────────────────────┐
+│ task dễ  → task-executor      (Haiku  — rẻ)                  │
+│ task khó → task-executor-pro  (Sonnet)                       │
+│ xong mỗi task → task-verifier (Sonnet) kiểm tra lại độc lập  │
+│ task rủi ro cao → task-verifier-pro (Opus) soi kỹ hơn        │
+│ FAIL → trả feedback cho executor sửa; PASS → đánh dấu done   │
+└──────────────────────────────────────────────────────────────┘
+        │
+        ▼
+Kết quả: code + mọi artifact nằm trong plans/<tên-feature>/
 ```
 
-Khởi động lại Claude Code. Không cần cấu hình gì thêm — skill tự chạy mode `single-repo`.
+Vì sao chia như vậy? Model rẻ làm sai khi thiếu ngữ cảnh — nên toàn bộ "trí khôn" được dồn
+vào bước viết spec: mỗi task spec chứa sẵn code liên quan (trích inline), convention phải
+theo, và lệnh tự kiểm tra. Executor chỉ việc làm đúng theo tờ giấy. Verifier là model khác
+kiểm lại, không tin lời tự khai.
 
-### agent-knowledge-base (hoặc KB khác)
+---
 
-Chỉ copy **skill + agents** (KB có guardrail hook riêng, đừng chép `settings.json`/`hooks/`):
+## 2. Cài đặt
+
+### Tình huống A — repo bình thường (phổ biến nhất)
+
+Copy 2 thư mục vào repo của bạn:
+
+```bash
+SRC=path/to/claude-feature-workflow
+REPO=path/to/your-repo
+
+mkdir -p "$REPO/.claude"
+cp -R "$SRC/.claude/skills"  "$REPO/.claude/"
+cp -R "$SRC/.claude/agents"  "$REPO/.claude/"
+```
+
+Khởi động lại Claude Code trong repo đó. Xong — không cần cấu hình gì.
+
+> Tuỳ chọn: muốn có "hàng rào" chặn agent sửa file ngoài vùng cho phép, copy thêm
+> `.claude/hooks/guard-paths.sh` + gộp `settings.json` (xem mục 6.3).
+
+### Tình huống B — workspace nhiều repo có agent-knowledge-base
+
+KB đã tích hợp sẵn (skill + agents + alias `/kb-feature` + host contract). Khi cần cập nhật
+bản mới từ repo này:
 
 ```bash
 SRC=path/to/claude-feature-workflow
 KB=path/to/agent-knowledge-base
+
 rm -rf "$KB/.claude/skills/feature-workflow"
 cp -R "$SRC/.claude/skills/feature-workflow" "$KB/.claude/skills/"
 cp "$SRC"/.claude/agents/task-*.md "$KB/.claude/agents/"
 ```
 
-Rồi đảm bảo `CLAUDE.md` của KB có mục "Feature-workflow host contract" (agent-knowledge-base
-đã có sẵn, kèm alias `/kb-feature`).
+Kiểm tra đã đồng bộ: `diff -r "$SRC/.claude/skills/feature-workflow" "$KB/.claude/skills/feature-workflow"`
+→ không in gì là chuẩn. Sau đó chạy `/kb-install-root` trong KB để làm mới bản copy ở
+workspace root (nếu bạn dùng tính năng đó).
 
-### Đồng bộ khi skill gốc có bản mới
+### Tình huống C — KB/host kiến trúc khác
 
-Chạy lại đúng lệnh copy ở trên. Vì bản copy là byte-identical và mọi thứ đặc thù host nằm
-trong host contract (ngoài skill), copy đè không mất gì. Kiểm tra nhanh:
+Copy như tình huống A, rồi khai báo một "host contract" trong `CLAUDE.md` của host — xem
+mục 6.1.
 
-```bash
-diff -r "$SRC/.claude/skills/feature-workflow" "$KB/.claude/skills/feature-workflow"
+---
+
+## 3. Cách dùng — 3 bước
+
+**Bước 1 — Lập kế hoạch.** Mở Claude Code, mô tả tính năng (hoặc dán URD):
+
+> *"Plan this feature: thêm đăng nhập bằng Google"*
+> (trong KB thì gõ: `/kb-feature "thêm đăng nhập bằng Google"`)
+
+Skill sẽ hỏi nếu có gì mơ hồ, rồi tạo:
+
+```
+plans/google-login/
+├── PLAN.md              ← tổng quan: bảng task, thứ tự, trạng thái
+├── SYSTEM-CONTEXT.md    ← convention + lệnh build/test cho executor
+├── testcases.md         ← testcase — CHỐT TRƯỚC KHI CODE
+└── tasks/
+    ├── task-001-….md    ← mỗi task một spec tự-đủ
+    └── task-002-….md
 ```
 
-## Dùng end-to-end
+**Bước 2 — Duyệt.** Đọc `PLAN.md` và `testcases.md`. Cần chỉnh gì thì nói luôn. Chưa đồng ý
+testcase thì workflow **không** code.
 
-1. **Lập kế hoạch**: dán/đính kèm URD → *"Plan this feature"* (trong KB: `/kb-feature "..."`).
-   Skill sinh `plans/<slug>/{PLAN.md, SYSTEM-CONTEXT.md, testcases.md, tasks/…}`.
-2. **Review** PLAN.md + testcases (gate: chưa đồng ý testcase thì chưa code) + vài task spec
-   (đã tự-đủ chưa: code inline, convention nêu rõ, self-check chạy được, `model`/`risk` hợp lý).
-3. **Thực thi**: *"Execute the plan in plans/<slug>"*. Orchestrator mở khóa write guard theo
-   host contract (nếu có) → route theo `model` (haiku→`task-executor`,
-   sonnet→`task-executor-pro`) → `task-verifier` (`task-verifier-pro` nếu `risk: high`);
-   FAIL → feedback quay lại executor; xong → đóng khóa + chạy bước hậu-merge của host.
+**Bước 3 — Thực thi.**
 
-## Chiến lược model
+> *"Execute the plan in plans/google-login"*
 
-Phân tầng theo task, không đổi toàn cục: việc cơ học → Haiku, việc khó/tạo mới → Sonnet,
-review rủi ro cao → Opus. Ép "Sonnet thực thi + Opus review toàn bộ" là hồ sơ tối-đa-độ-chắc —
-hợp lệ nhưng đắt hơn nhiều lần và mất lý do tồn tại của orchestrator-worker; muốn bật thì đặt
-`model: sonnet` cho mọi task và dispatch `task-verifier-pro` cho tất cả. Multi-agent tốn
-4–7× token; tiering là cách giữ chi phí hợp lý.
+Session chính điều phối: giao task cho executor đúng tầng (chạy song song khi được), gọi
+verifier kiểm từng task, task fail thì tự sửa theo feedback, xong hết thì báo cáo. Bạn có
+thể đóng máy giữa chừng — mở lại và nói *"tiếp tục plans/google-login"* là chạy tiếp (mọi
+trạng thái nằm trong `PLAN.md`).
 
-## Rule & bảo mật: mềm vs cứng
+---
 
-- **Context (mềm)** — CLAUDE.md / SYSTEM-CONTEXT.md / task spec *định hướng*, không đảm bảo.
-  Executor chạy context tách biệt → planner phải **chép convention vào SYSTEM-CONTEXT.md và
-  Constraints của từng task**.
-- **Enforcement (cứng)** — hook + giới hạn tool, áp cho cả tool call của subagent. Skill không
-  bao giờ lách hook (kể cả qua Bash redirect); host nào có thủ tục mở khóa thì đó là cửa duy
-  nhất, mở đúng phạm vi plan và đóng ngay khi dừng. Executor bị chặn thì **báo lại, không
-  lách**. Verifier read-only (không có Write/Edit) — đó cũng là enforcement.
-
-Gói kèm hook mẫu cho repo đơn lẻ: `.claude/hooks/guard-paths.sh` (mode `warn`; muốn enforce
-thật: sửa `ALLOWED_REGEX` + đổi `MODE="block"`, giữ cờ thực thi `chmod +x`).
-
-## Cấu trúc gói
+## 4. File nào để làm gì (bản đồ repo này)
 
 ```
 .claude/
-├── skills/feature-workflow/
-│   ├── SKILL.md                          # orchestrator: Phase 0 (env) + 5 phase + model strategy
+├── skills/feature-workflow/        ← SKILL (bộ não điều phối)
+│   ├── SKILL.md                    ← quy trình 6 phase — file quan trọng nhất
 │   ├── references/
-│   │   ├── task-spec-standard.md         # chuẩn task spec + checklist Haiku-readiness (quan trọng nhất)
-│   │   └── analysis.md                   # phân tích ảnh hưởng: có KB (mode A) / không KB (mode B)
-│   └── assets/
-│       ├── task-template.md              # khuôn task (model/risk/repo, conventions, pattern-to-mirror)
-│       ├── PLAN-template.md              # khuôn PLAN.md (có mục Environment + gate testcase)
-│       └── testcases-template.md         # khuôn testcase (host có thể thay bằng template riêng)
-├── agents/
-│   ├── task-executor.md                  # worker Haiku
-│   ├── task-executor-pro.md              # worker Sonnet
-│   ├── task-verifier.md                  # verifier Sonnet (risk: low)
-│   └── task-verifier-pro.md              # verifier Opus (risk: high)
-├── hooks/guard-paths.sh                  # (tùy chọn, repo đơn lẻ) PreToolUse guard, mode warn
-└── settings.json                         # (tùy chọn, repo đơn lẻ) khai báo hook trên
+│   │   ├── task-spec-standard.md   ← chuẩn viết task spec "tự-đủ" + checklist
+│   │   └── analysis.md             ← cách phân tích ảnh hưởng (có KB / không KB)
+│   └── assets/                     ← 3 khuôn: task, PLAN, testcases
+├── agents/                         ← 4 SUBAGENT (thợ + giám khảo)
+│   ├── task-executor.md            ← thợ Haiku (task cơ học)
+│   ├── task-executor-pro.md        ← thợ Sonnet (task khó / tạo mới)
+│   ├── task-verifier.md            ← giám khảo Sonnet (chỉ đọc, không sửa)
+│   └── task-verifier-pro.md        ← giám khảo Opus (task risk: high)
+├── hooks/guard-paths.sh            ← (tuỳ chọn) hàng rào chặn ghi ngoài vùng cho phép
+└── settings.json                   ← (tuỳ chọn) khai báo hook trên
 ```
+
+Ai đọc file nào: **bạn** chỉ cần README này. **Session chính** đọc SKILL.md + references.
+**Executor/verifier** chỉ đọc task spec + SYSTEM-CONTEXT.md được đưa — chúng không thấy gì
+khác, vì vậy spec mới phải tự-đủ.
+
+---
+
+## 5. Vì sao skill này copy đi đâu cũng chạy?
+
+Khi khởi động (Phase 0), skill tự trả lời: *"Tôi đang ở môi trường nào?"* — theo thứ tự:
+
+1. **Có "Feature-workflow host contract" không?** — một mục trong `CLAUDE.md` của host khai
+   báo: plans để đâu, path viết kiểu gì, phân tích qua nguồn nào, có hook chặn ghi không +
+   cách mở khóa, sau khi merge làm gì. Có → theo đúng contract. (Skill còn tự dò contract ở
+   `./`, `./*/`, `../*/` — nên gọi từ workspace root cũng tìm ra KB.)
+2. **Không có contract nhưng thư mục trông như một KB** (có index + relationships + repos
+   anh em) → chạy chế độ `kb-workspace` với mặc định hợp lý.
+3. **Còn lại** → chế độ `single-repo`: plans trong repo, phân tích thẳng code, không cần
+   cấu hình.
+
+Kết quả nhận diện được ghi vào mục `## Environment` của `PLAN.md` — nhờ đó session sau
+resume được mà không phải đoán lại.
+
+**Hệ quả cho bạn:** mọi thứ đặc thù của từng nơi nằm **ngoài** skill (trong CLAUDE.md của
+host). Skill là một bản duy nhất, sửa ở repo này, copy đè là xong.
+
+---
+
+## 6. Nâng cao (đọc khi cần)
+
+### 6.1. Viết host contract cho KB/host khác
+
+Thêm vào `CLAUDE.md` của host mục sau, điền đủ 5 ý:
+
+```markdown
+### Feature-workflow host contract
+<!-- Read by the feature-workflow skill (Phase 0). -->
+- Mode: kb-workspace
+- Plans root: plans/<feature-slug>/ trong repo này
+- Code paths in specs: ../<repo>/…, tính từ gốc repo này
+- Analysis sources: <đọc gì, theo thứ tự nào; lệnh test lấy ở đâu>
+- Testcase template: <path — bỏ qua nếu dùng khuôn mặc định của skill>
+- Write guard: <hook nào chặn ghi + thủ tục mở/đóng khóa; hoặc "none">
+- After merge: <các bước hậu-merge; hoặc "none">
+```
+
+Ví dụ thật, đang chạy: mục cùng tên trong `CLAUDE.md` của `agent-knowledge-base`.
+
+### 6.2. Chiến lược model — vì sao không "Opus review tất cả cho chắc"?
+
+Phân tầng theo task: việc cơ học → Haiku, việc khó → Sonnet, review rủi ro cao → Opus.
+Multi-agent vốn tốn 4–7× token so với một session; phân tầng là cái bù lại chi phí đó.
+Opus-review-mọi-task cho thêm rất ít độ chắc mà nhân chi phí lên nhiều — nên Opus chỉ dành
+cho `risk: high` (auth, thanh toán, migration, đổi contract) và các pha leo thang. Muốn ép
+hồ sơ "chắc tối đa" thật sự: đặt `model: sonnet` cho mọi task và dispatch `task-verifier-pro`
+cho tất cả.
+
+### 6.3. Hai lớp kỷ luật: "mềm" và "cứng"
+
+- **Mềm (context):** CLAUDE.md, SYSTEM-CONTEXT.md, task spec — *định hướng* model chứ không
+  ép được. Executor chạy context cô lập, không kế thừa gì — vì thế planner phải chép mọi
+  convention vào spec/SYSTEM-CONTEXT.
+- **Cứng (enforcement):** hook + giới hạn tool — harness thực thi tất định, áp cho cả
+  subagent. Verifier không có tool Write/Edit (read-only thật). Executor bị hook chặn thì
+  báo lại, không lách. Skill không bao giờ vòng qua hook (kể cả bằng Bash redirect).
+
+Repo này kèm hook mẫu cho repo đơn lẻ: `guard-paths.sh` chặn Write/Edit ngoài allowlist,
+ship ở chế độ `warn` (chỉ cảnh báo). Bật thật: sửa `ALLOWED_REGEX` cho khớp repo bạn, đổi
+`MODE="block"`, giữ cờ thực thi (`chmod +x`). Repo đã có `settings.json` thì gộp khối
+`hooks` vào, đừng ghi đè.
+
+### 6.4. Checklist chất lượng của một task spec
+
+Spec đạt khi: executor đọc **mỗi spec đó** là làm đúng được — code liên quan đã trích
+inline, convention ghi rõ (không nói "theo chuẩn dự án"), có "Pattern to mirror" khi tạo
+file mới, Definition of Done kiểm được bằng mắt/lệnh, self-check là lệnh nguyên văn. Chuẩn
+đầy đủ + checklist: `references/task-spec-standard.md`.
+
+---
+
+## 7. Hỏi nhanh
+
+- **Phải gõ đúng lệnh gì để kích hoạt?** Không cần lệnh — mô tả tính năng kèm ý định làm là
+  skill tự vào việc. Trong KB có alias `/kb-feature "<mô tả>"`.
+- **Đang chạy giữa chừng thì tắt máy?** Không sao. Trạng thái từng task nằm trong PLAN.md;
+  mở lại và bảo "tiếp tục plans/<slug>".
+- **Thiếu agents thì sao?** Skill sẽ báo và đề nghị: cài từ gói này, hoặc chạy chế độ
+  degraded (session chính tự làm tuần tự theo spec).
+- **Sửa skill ở bản copy được không?** Đừng. Sửa ở repo này rồi copy đè (mục 2), không thì
+  các nơi lệch nhau — đúng cái vấn đề kiến trúc này sinh ra để tránh.
