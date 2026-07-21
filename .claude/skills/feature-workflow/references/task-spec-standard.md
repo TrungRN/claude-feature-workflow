@@ -30,6 +30,15 @@ Use the code-path convention declared in PLAN.md `## Environment` (Phase 0), con
 
 The orchestrator tells the executor the absolute root; the executor resolves paths against it.
 
+## Language
+
+Prose in the spec (Objective, the text of Definition-of-Done items, Constraints, Steps) is written
+in the plan's recorded language — often not English. Structure is always English: the section
+headings below, every frontmatter field name and enum value, and all commands, paths, and code
+identifiers. The agents match on those English headings, and the executors are cheap models that
+drift when the format shifts, so translating structure breaks the pipeline while translating prose
+costs nothing.
+
 ## The envelope: frontmatter + Markdown body
 
 Use **YAML frontmatter for machine-readable metadata** (the orchestrator parses it to order,
@@ -49,8 +58,9 @@ it'll know it's done* before any detail.
 | `files` | yes | Files this task may create/modify, in the declared path convention. Keep tight. |
 | `model` | yes | Execution tier: `haiku` (mechanical/bounded) or `sonnet` (logic, ambiguity, new components). |
 | `risk` | yes | `high` (auth/payments/migrations/security/data-loss/contract change) or `low`. Drives verifier tier & strictness. |
+| `ui_verify` | yes | Whether the verifier drives the real app: `none` (default), `browser`, or `mobile`. **The planner always writes `none`** — only the user turns it on, because driving an app costs real tokens. Command self-checks run regardless. Must match the plan's UI surface when set. |
 | `scope` | no | `small` / `medium` — a bound signal. |
-| `status` | yes | `todo` / `in-progress` / `done` / `blocked`. Orchestrator updates. |
+| `status` | yes | `todo` / `in-progress` / `done` / `blocked` / `needs-human`. Orchestrator updates. |
 
 ## Body sections (in this order)
 
@@ -71,9 +81,54 @@ it'll know it's done* before any detail.
    dependencies), which files are off-limits.
 7. **Expected output** — a sample diff, the shape of the result, or an example of the behavior.
 8. **Self-check** — the exact commands to run, **verbatim** (typecheck, lint, the specific
-   tests), with expected results, plus any manual checks. State the working directory.
+   tests), with expected results. State the working directory. Whenever a Definition-of-Done item
+   is user-visible, add a `### UI check` subsection (below) — regardless of what `ui_verify` says.
 9. **Report format** — how to report back: what changed, the Definition-of-Done checklist ticked
    or not, and — if blocked — exactly where and what's missing.
+
+## The `### UI check` block
+
+A command exiting 0 does not prove a screen behaves correctly. So whenever a Definition-of-Done
+item is user-visible, the spec carries a script for checking it against the running app.
+
+**Write this block whenever the task has user-visible behavior — even when `ui_verify: none`,
+which is the default.** The block is worth writing either way, because who runs it depends on
+`ui_verify`:
+
+| `ui_verify` | Who runs the block |
+|---|---|
+| `none` *(default)* | Nobody, automatically. It is the **manual test script** — and it's what the user is handed if this task ever lands in the Manual verification queue. |
+| `browser` / `mobile` | The **verifier** drives the real app through it. Never the executor. |
+
+Writing it costs one paragraph and makes turning verification on later a one-word edit. Leaving it
+out means the user has nothing to test against by hand.
+
+Three parts, all required:
+
+```markdown
+### UI check
+- App under test: <exact start command + URL, or app id / build path + which device>
+- Steps:
+  1. <one deterministic action per line>
+  2. <…>
+- Expected: <what is observable after each step, tied to TC ids from ./testcases.md>
+```
+
+- **App under test** must be runnable from what's written. `npm run dev` in `../shop-web`, then
+  `http://localhost:3000/signup` — not "start the app".
+- **Steps** must be unambiguous about *which* element: "click the button labelled **Sign up**",
+  not "submit the form". The verifier reads the accessibility tree, so name things by their
+  visible label or role.
+- **Expected** must be observable, not internal: "the text `Invalid email` appears below the
+  email input" — not "validation state is set".
+
+The test of a good UI check: a stranger with no context could follow it and reach the same
+verdict. If the steps only make sense to someone who already knows the feature, rewrite them.
+
+If `ui_verify` is on but the tooling is unavailable at execution time, the verifier returns
+`NEEDS-HUMAN` and
+these exact steps are what the user is handed. That is another reason to write them for a human
+reader.
 
 ## The Haiku-readiness checklist
 
@@ -90,6 +145,9 @@ Before marking a spec done, confirm every line. If any fails, fix the spec.
 - [ ] A **runnable self-check** with verbatim commands, expected results, and working directory.
 - [ ] Constraints say what NOT to touch.
 - [ ] `model` and `risk` are set appropriately for the task's difficulty and blast radius.
+- [ ] `ui_verify` is `none` unless the user explicitly asked to turn it on for this task.
+- [ ] If any Definition-of-Done item is user-visible, a `### UI check` block exists and is complete
+      enough for a stranger to run — with `ui_verify: none` that stranger is the user.
 - [ ] Small enough to fit comfortably in one executor context.
 
 ## Example — GOOD (excerpt, kb-workspace mode)
@@ -117,6 +175,19 @@ const [email, setEmail] = useState("");
 ## Constraints / Do NOT touch
 - Do not modify the submit network call beyond gating it on validity.
 - Do not add a validation library (no yup/zod); a regex is fine.
+
+## Self-check
+- In `../shop-web`, run `npm run typecheck` → exits 0, no errors.
+
+### UI check
+- App under test: in `../shop-web`, `npm run dev` → http://localhost:3000/signup
+- Steps:
+  1. Type `abc` into the field labelled **Email**.
+  2. Click the field labelled **Password** so Email loses focus.
+  3. Clear Email and type `a@b.com`.
+- Expected: after step 2, the text `Invalid email` appears below the Email input and the
+  **Sign up** button is disabled (TC-3). After step 3, the error text is gone and **Sign up**
+  is enabled (TC-4).
 ````
 
 ## Example — BAD (and why)

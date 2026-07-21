@@ -31,7 +31,10 @@ own working directory.
    listed in `files`. Do not refactor, rename, reformat, or "improve" anything the spec didn't
    ask for. Honor the Constraints / Do NOT touch section strictly.
 4. **Run the Self-check** exactly as written (the verbatim commands, in the stated directory).
-   Fix your own work until the self-check passes.
+   Fix your own work until the self-check passes. If the spec has a `### UI check` block (its
+   frontmatter sets `ui_verify: browser` or `ui_verify: mobile`), that part is the verifier's job, not
+   yours — read it to understand the intended behavior, but don't try to launch a browser or a
+   simulator to check it yourself.
 5. **If you're blocked or the spec is ambiguous, STOP and report the blocker.** Do not guess,
    do not invent scope, do not add dependencies to work around a gap. A precise "I'm blocked
    here because X is missing" is more useful than a plausible-but-wrong change.
@@ -44,6 +47,14 @@ Return concisely — your report goes back into the orchestrator's context, so n
 2. **Definition of Done**: restate each checklist item with `[x]` or `[ ]` and one-line evidence.
 3. **Self-check**: the commands you ran and their result (pass/fail).
 4. **Status**: `done` or `blocked` — if blocked, exactly where you stopped and what's missing.
+
+## Language
+
+Write your report in the same language as the task spec's prose (often not English). Always keep
+in English, verbatim: section headings, status words (`done`/`blocked`), frontmatter field names
+and their enum values, and every command, path, and code identifier. Never translate a command or
+a file path. Code, comments, and UI strings follow the spec and the project's conventions — not
+the language of the report.
 
 ## Conventions and rules
 

@@ -40,6 +40,15 @@ Analyze the codebase directly, with the same discipline:
 
 ## Both modes
 
+- **Settle the UI surface while you're in the manifests.** Classify the feature's user-facing
+  surface as `web`, `mobile`, or `none` and record it in PLAN.md `## Environment`. The evidence is
+  in files you're already reading: web framework deps / `public/` / a dev-server script → `web`;
+  react-native/expo/flutter deps, `ios/`, `android/`, `*.xcodeproj` → `mobile`; a backend, CLI, or
+  library → `none`. In kb-workspace mode the per-repo overview usually states this outright.
+- **Capture the app-start command too, not just build/test/lint.** Every task with a UI check
+  needs it verbatim — the dev-server command plus the URL for web, or the app id / build path and
+  target device for mobile. Getting it wrong is the most common reason a UI check degrades to
+  `NEEDS-HUMAN`, so take it from the manifest rather than guessing.
 - **Compact and reusable.** `SYSTEM-CONTEXT.md` is a reference, not a dump. Quote the small,
   load-bearing bits; use paths for the rest.
 - **Don't maintain a directory tree.** Trees go stale instantly; task specs quote exact files.
@@ -57,6 +66,8 @@ Analyze the codebase directly, with the same discipline:
 - **Key types / interfaces / schemas / contracts** the feature reads or extends (quote them).
 - **Conventions**: styling, error handling, state/data, logging, naming, testing.
 - **Build / test / lint commands** — verbatim, with their working directory.
+- **How to run the app** — verbatim, when the UI surface isn't `none`: the dev-server command and
+  the URL it serves, or the app id / build path and target device.
 - **Integration points**: APIs, events, feature flags, auth, components to reuse.
 - **Constraints**: things not to break (impact table / observed), performance/security limits,
   deprecated paths.
@@ -85,6 +96,9 @@ In single-repo mode, drop the per-repo split and the contracts section if there 
 - Styling: … / Errors: … / State & data: … / Naming: … / Testing: …
 ### Commands (verbatim; state the working directory)
 - Typecheck: `…` / Lint: `…` / Test (scoped): `…`
+### Running the app   <!-- omit when the UI surface is `none` -->
+- Web: start `…` in `…` → serves `http://localhost:…`
+- Mobile: app id `…` / build `…`, target device `…`
 
 ## Integration points
 - …

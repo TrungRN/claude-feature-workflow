@@ -7,9 +7,17 @@ files:                  # only what this task may create/modify, in the declared
   - <path/to/file or ../<repo>/path/to/file>
 model: haiku            # haiku = mechanical/bounded | sonnet = logic/ambiguity/new components
 risk: low               # high = auth/payments/migrations/security/data-loss/contract change
+ui_verify: none         # none (default) | browser | mobile — drive the real app to check the
+                        # ### UI check block. OFF unless the user asks for it: it costs tokens.
+                        # Command self-checks run either way.
 scope: small
-status: todo            # todo | in-progress | done | blocked
+status: todo            # todo | in-progress | done | blocked | needs-human — written by the
+                        # orchestrator; must always match this task's row in PLAN.md (that wins)
 ---
+
+<!-- Language: prose below (Objective, DoD text, Steps…) is in the plan's recorded language.
+     Headings, field names, enum values, commands and paths stay in English. -->
+
 
 ## Objective
 <1–2 sentences: what to build and why.>
@@ -45,7 +53,16 @@ Required structure: <props/params, exports, file location, naming>.
 
 ## Self-check   <!-- verbatim commands + expected results; state the working directory -->
 - In `<dir>`, run `<command>` → expected `<result>`
-- Manually: <steps and expected behavior>
+
+### UI check   <!-- Write this whenever a DoD item is user-visible, even with ui_verify: none.
+     ui_verify: none    → nobody runs it automatically; it is the manual test script, and what
+                          gets handed to the user if the task lands in the Manual verification queue.
+     browser | mobile   → the VERIFIER drives the real app through it. Never the executor. -->
+- App under test: <exact start command + URL | app id / build path + target device>
+- Steps:
+  1. <one deterministic action; name elements by visible label or role>
+  2. <…>
+- Expected: <observable result per step, tied to TC ids in ./testcases.md>
 
 ## Report format
 Return:

@@ -28,6 +28,9 @@ Bạn: "Làm tính năng X" (dán URD/ticket cũng được)
    ⛔ DỪNG — bạn duyệt kế hoạch + testcase rồi mới đi tiếp
         │
         ▼
+   ❓ Bạn chọn nhịp chạy: từng task / từng nhóm song song / chạy hết
+        │
+        ▼
 ┌─ THỰC THI (các subagent) ────────────────────────────────────┐
 │ task dễ  → task-executor      (Haiku  — rẻ)                  │
 │ task khó → task-executor-pro  (Sonnet)                       │
@@ -36,6 +39,10 @@ Bạn: "Làm tính năng X" (dán URD/ticket cũng được)
 │ FAIL → trả feedback cho executor sửa; PASS → đánh dấu done   │
 └──────────────────────────────────────────────────────────────┘
         │
+        ▼
+   ⏸  DỪNG sau mỗi đơn vị — báo cáo để bạn review, chờ bạn nói "tiếp"
+        │  (mọi bước đều ghi trạng thái + nhật ký vào PROGRESS.md
+        │   → đứt giữa chừng vẫn resume được)
         ▼
 Kết quả: code + mọi artifact nằm trong plans/<tên-feature>/
 ```
@@ -160,6 +167,7 @@ plans/google-login/
 ├── PLAN.md              ← tổng quan: bảng task, thứ tự, trạng thái
 ├── SYSTEM-CONTEXT.md    ← convention + lệnh build/test cho executor
 ├── testcases.md         ← testcase — CHỐT TRƯỚC KHI CODE
+├── PROGRESS.md          ← (sinh ra khi bắt đầu chạy) nhật ký + khối bàn giao
 └── tasks/
     ├── task-001-….md    ← mỗi task một spec tự-đủ
     └── task-002-….md
@@ -172,10 +180,98 @@ testcase thì workflow **không** code.
 
 > *"Execute the plan in plans/google-login"*
 
-Session chính điều phối: giao task cho executor đúng tầng (chạy song song khi được), gọi
-verifier kiểm từng task, task fail thì tự sửa theo feedback, xong hết thì báo cáo. Bạn có
-thể đóng máy giữa chừng — mở lại và nói *"tiếp tục plans/google-login"* là chạy tiếp (mọi
-trạng thái nằm trong `PLAN.md`).
+**Trước khi làm gì, skill hỏi bạn muốn chạy theo nhịp nào** — để bạn còn kịp review code:
+
+| Nhịp | Chạy bao nhiêu rồi dừng | Hợp với |
+|---|---|---|
+| `task-by-task` | 1 task | muốn soi kỹ từng thay đổi |
+| `by-group` *(mặc định gợi ý)* | trọn 1 nhóm chạy song song | cân bằng — vừa nhanh vừa review được |
+| `all` | chạy hết | task nhỏ, tin tưởng, review một lần ở cuối |
+
+Sau **mỗi** đơn vị, session chính dừng lại và báo cáo: task nào xong, verifier phán thế nào,
+file nào đổi, kèm lệnh `git diff` để bạn tự xem. Bạn trả lời `tiếp` / `đổi sang all` /
+`làm lại task-003` / `dừng`. Riêng mode `all` không hỏi giữa chừng, **nhưng vẫn dừng** khi
+một task fail lần 2, bị blocked, hoặc bị hook chặn ghi.
+
+Trạng thái được ghi ngay lúc nó đổi — `Status:` đầu `PLAN.md`, cột `status` trong bảng task,
+và `status:` trong frontmatter mỗi spec — nên mở file ra là biết đang tới đâu.
+
+**Hết token / đóng máy giữa chừng?** `PROGRESS.md` ghi nhật ký từng lần dispatch và từng kết
+quả verify, cuối file luôn có khối **HANDOFF** mô tả: đang đứng ở đâu, task kế tiếp là gì,
+đường dẫn tuyệt đối tới các file cần đọc, lệnh build/test. Mở session mới nói *"tiếp tục
+plans/google-login"* là chạy tiếp. Muốn đổi sang ChatGPT/Cursor hay tự làm tay cũng được —
+copy khối HANDOFF là đủ, không cần skill này.
+
+---
+
+## 3b. Verify giao diện: web và mobile (mặc định TẮT)
+
+Typecheck xanh **không** chứng minh cái nút bấm được. Nên task nào có tiêu chí mô tả thứ người
+dùng nhìn thấy sẽ được viết kèm một khối `### UI check`: mở app bằng lệnh gì, bấm gì theo thứ tự
+nào, phải thấy gì.
+
+**Nhưng mặc định không ai chạy khối đó tự động** — nó là bản hướng dẫn test tay cho bạn. Lái app
+thật tốn token thật (mỗi lần đọc màn hình là cả cây accessibility), nên **chỉ bạn mới được bật**,
+và bật theo từng task:
+
+```yaml
+ui_verify: none      # mặc định — không lái app
+ui_verify: browser   # bạn bật: verifier tự mở web và bấm theo kịch bản
+ui_verify: mobile    # bạn bật: verifier tự chạy trên simulator/emulator
+```
+
+Lúc trình plan cho bạn duyệt, skill sẽ **liệt kê sẵn** những task có khối UI check, kèm lý do đáng
+bật (thường là `risk: high`, luồng tiền, luồng đăng nhập):
+
+> Các task sau có UI check chạy máy được, mặc định tắt. Muốn bật cái nào thì nói:
+> - `task-003` — form đăng ký báo lỗi "Invalid email" (TC-3, TC-4) → `browser`
+> - `task-007` — màn thanh toán khoá nút khi thẻ sai (TC-9), `risk: high` → `mobile`
+
+Bạn chỉ cần nói "bật task-007". Không nói gì thì tất cả ở `none`, và **skill không hỏi han gì về
+MCP cả**.
+
+**MCP chỉ được kiểm tra khi thực sự cần.** Không có bước preflight nào chạy trước. Chỉ khi tới
+lượt chạy một nhóm có task đã bật, skill mới chạy `claude mcp list` — và chỉ kiểm đúng server mà
+nhóm đó cần:
+
+| Bật | MCP cần | Lệnh cài |
+|---|---|---|
+| `browser` | Playwright | `claude mcp add -s <scope> playwright -- npx @playwright/mcp@latest` |
+| `mobile` | Maestro | cài **Maestro CLI** trước (docs.maestro.dev), rồi `claude mcp add -s <scope> maestro -- maestro mcp` |
+
+Thiếu thì nó hỏi: cài hay không, và cài vào `project` (ghi `.mcp.json` trong repo, commit được,
+cả team dùng chung) hay `user` (chỉ máy bạn). Không bao giờ tự cài khi chưa hỏi, không tự cài
+Maestro CLI hộ bạn, và **từ chối một lần thì không hỏi lại nữa** (ghi vào `PLAN.md § Execution`).
+
+Task đã bật mà không chạy được (bạn từ chối cài, không có simulator, app không lên) → verifier trả
+**`NEEDS-HUMAN`** thay vì `PASS`. Nghĩa là: *code xong, lệnh kiểm tra xanh hết, nhưng phần
+nhìn-thấy-được thì máy chưa xác nhận.* Task đó:
+
+- **không chặn** các task phụ thuộc — pipeline vẫn chạy tiếp;
+- được ghi vào `## Manual verification queue` trong `PLAN.md`, kèm đúng các bước để bạn tự bấm;
+- và checkbox cuối `PLAN.md` **không được tick** cho tới khi bạn xác nhận.
+
+Task để `none` thì **không bao giờ** ra `NEEDS-HUMAN` — verifier chấm bình thường bằng lệnh.
+
+> ⚠️ MCP vừa cài xong có thể chưa tới được subagent cho tới khi **restart Claude Code**. Nếu
+> verifier báo không thấy tool, restart rồi chạy lại đơn vị đó — đừng để task pass mà chưa verify.
+
+---
+
+## 3c. Ngôn ngữ trong file sinh ra
+
+Quy tắc: **tiếng Việt cho người đọc, tiếng Anh cho máy đọc.**
+
+| Tiếng Việt (theo ngôn ngữ bạn dùng) | Luôn tiếng Anh |
+|---|---|
+| Hội thoại, câu hỏi chọn nhịp, báo cáo cuối mỗi đơn vị | Heading của template (`## Definition of Done`, `## Self-check`, `### UI check`…) |
+| Phần văn xuôi trong file: Summary, Objective, nội dung tiêu chí, mô tả kịch bản, khối HANDOFF | Tên field frontmatter, giá trị enum (`todo`/`done`/`needs-human`, `haiku`/`sonnet`, `browser`/`mobile`…) |
+| Ghi chú trong nhật ký `PROGRESS.md` | Verdict `PASS`/`FAIL`/`NEEDS-HUMAN`, mọi lệnh, đường dẫn, tên biến/hàm |
+
+Lý do không dịch phần cấu trúc: 4 subagent nhận diện task spec **qua đúng những heading tiếng
+Anh đó**, và executor là model rẻ (Haiku) rất dễ lệch format. Dịch heading là làm hỏng khớp nối
+giữa các agent, trong khi dịch văn xuôi thì không mất gì. Ngôn ngữ được chốt ở Phase 0 và ghi vào
+`PLAN.md § Environment`, nên session sau đọc lại vẫn viết đúng thứ tiếng.
 
 ---
 
@@ -188,11 +284,11 @@ trạng thái nằm trong `PLAN.md`).
 │   ├── references/
 │   │   ├── task-spec-standard.md   ← chuẩn viết task spec "tự-đủ" + checklist
 │   │   └── analysis.md             ← cách phân tích ảnh hưởng (có KB / không KB)
-│   └── assets/                     ← 3 khuôn: task, PLAN, testcases
+│   └── assets/                     ← 4 khuôn: task, PLAN, testcases, PROGRESS
 ├── agents/                         ← 4 SUBAGENT (thợ + giám khảo)
 │   ├── task-executor.md            ← thợ Haiku (task cơ học)
 │   ├── task-executor-pro.md        ← thợ Sonnet (task khó / tạo mới)
-│   ├── task-verifier.md            ← giám khảo Sonnet (chỉ đọc, không sửa)
+│   ├── task-verifier.md            ← giám khảo Sonnet (không sửa file; lái được web/mobile)
 │   └── task-verifier-pro.md        ← giám khảo Opus (task risk: high)
 ├── hooks/guard-paths.sh            ← (tuỳ chọn) hàng rào chặn ghi ngoài vùng cho phép
 └── settings.json                   ← (tuỳ chọn) khai báo hook trên
@@ -266,8 +362,10 @@ cho tất cả.
   ép được. Executor chạy context cô lập, không kế thừa gì — vì thế planner phải chép mọi
   convention vào spec/SYSTEM-CONTEXT.
 - **Cứng (enforcement):** hook + giới hạn tool — harness thực thi tất định, áp cho cả
-  subagent. Verifier không có tool Write/Edit (read-only thật). Executor bị hook chặn thì
-  báo lại, không lách. Skill không bao giờ vòng qua hook (kể cả bằng Bash redirect).
+  subagent. Verifier không có tool Write/Edit (read-only thật với repo — nó được lái browser
+  hoặc simulator để quan sát, nhưng vẫn không sửa được file; hai tool chạy JS tuỳ ý của
+  Playwright cũng bị chặn qua `disallowedTools`). Executor bị hook chặn thì báo lại, không
+  lách. Skill không bao giờ vòng qua hook (kể cả bằng Bash redirect).
 
 Repo này kèm hook mẫu cho repo đơn lẻ: `guard-paths.sh` chặn Write/Edit ngoài allowlist,
 ship ở chế độ `warn` (chỉ cảnh báo). Bật thật: sửa `ALLOWED_REGEX` cho khớp repo bạn, đổi
@@ -289,8 +387,24 @@ file mới, Definition of Done kiểm được bằng mắt/lệnh, self-check l
   `/feature-workflow "<mô tả>"`. Không gõ lệnh cũng được — mô tả tính năng kèm ý định làm là
   skill tự vào việc. `/kb-feature` chỉ là alias có sẵn trong `agent-knowledge-base`; host
   khác không có (trừ khi bạn tự tạo, xem mục 6.1).
-- **Đang chạy giữa chừng thì tắt máy?** Không sao. Trạng thái từng task nằm trong PLAN.md;
-  mở lại và bảo "tiếp tục plans/<slug>".
+- **Đang chạy giữa chừng thì tắt máy / hết token?** Không sao. Trạng thái từng task nằm trong
+  PLAN.md, còn `PROGRESS.md` ghi nhật ký + khối HANDOFF (đang ở đâu, làm gì tiếp, đọc file
+  nào). Mở lại và bảo "tiếp tục plans/<slug>".
+- **Muốn chuyển sang AI khác làm tiếp?** Copy khối **HANDOFF** ở cuối `PROGRESS.md` — nó tự-đủ,
+  ghi đường dẫn tuyệt đối và lệnh build/test, không cần biết skill này.
+- **Nó chạy một mạch hết task, tôi không kịp review?** Chọn nhịp `task-by-task` hoặc `by-group`
+  lúc nó hỏi (xem Bước 3). Đang chạy vẫn đổi được: cứ nói ở lần dừng kế tiếp.
+- **Tôi sợ verify giao diện đốt token.** Mặc định nó **tắt** (`ui_verify: none`) — bạn không bật
+  thì không có lần nào mở browser, cũng không có câu hỏi MCP nào. Bật từng task một lúc duyệt
+  plan, chỉ cho những màn hình bạn thấy đáng. Xem mục 3b.
+- **`NEEDS-HUMAN` là lỗi à?** Không. Nghĩa là task bạn **đã bật** verify giao diện nhưng máy chạy
+  không được (chưa cài MCP, không có simulator, app không lên). Code vẫn tính là xong cho các task
+  phụ thuộc; việc còn lại nằm ở `## Manual verification queue` trong `PLAN.md` kèm sẵn các bước
+  bấm tay. Task để `none` thì không bao giờ ra `NEEDS-HUMAN`.
+- **Không muốn cài MCP nào cả?** Cứ trả lời "không" lúc nó hỏi — và nó sẽ không hỏi lại nữa. Skill
+  vẫn chạy bình thường, task đã bật sẽ ra `NEEDS-HUMAN` để bạn tự kiểm — vẫn tốt hơn `PASS` giả.
+- **Project của tôi không có giao diện?** Không đổi gì cả: UI surface là `none`, mọi task là
+  `ui_verify: none`, skill không hỏi MCP lần nào.
 - **Thiếu agents thì sao?** Skill sẽ báo và đề nghị: cài từ gói này, hoặc chạy chế độ
   degraded (session chính tự làm tuần tự theo spec).
 - **Sửa skill ở bản copy được không?** Đừng. Sửa ở repo này rồi copy đè (mục 2), không thì

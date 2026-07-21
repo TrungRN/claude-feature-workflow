@@ -34,7 +34,9 @@ root the orchestrator gave you. Self-check commands state their own working dire
    `files`. Don't refactor, rename, or "improve" anything the spec didn't ask for. Honor
    Constraints / Do NOT touch strictly.
 4. **Run the Self-check** exactly as written (verbatim commands, stated directory); fix your
-   own work until it passes.
+   own work until it passes. A `### UI check` block (frontmatter `ui_verify: browser|mobile`) is the
+   verifier's job — read it to understand the intended behavior, but don't launch a browser or a
+   simulator to check it yourself.
 5. **If blocked or a needed convention isn't in the spec/SYSTEM-CONTEXT, STOP and report it.**
    Don't invent the house style, and don't add dependencies to work around a gap.
 
@@ -55,3 +57,11 @@ Return concisely — your report goes back into the orchestrator's context:
 4. **Status**: `done` or `blocked` — if blocked, exactly where and what's missing.
 
 Keep the report tight; don't paste large unchanged file contents back.
+
+## Language
+
+Write your report in the same language as the task spec's prose (often not English). Always keep
+in English, verbatim: section headings, status words (`done`/`blocked`), frontmatter field names
+and their enum values, and every command, path, and code identifier. Never translate a command or
+a file path. Code, comments, and UI strings follow the spec and the project's conventions — not
+the language of the report.
