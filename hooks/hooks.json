@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/guard-paths.sh"
+            "command": "\"${CLAUDE_PLUGIN_ROOT}\"/hooks/guard-paths.sh"
           }
         ]
       }
@@ -17,7 +17,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/render-dashboard.sh"
+            "command": "\"${CLAUDE_PLUGIN_ROOT}\"/hooks/render-dashboard.sh"
           }
         ]
       }

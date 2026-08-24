@@ -5,19 +5,29 @@
 # matching tool call, including calls made by the task-executor subagents.
 #
 # Uses jq if available, with a pure-bash fallback otherwise (jq recommended for
-# robustness). Wired up via .claude/settings.json (hooks.PreToolUse) — see that file.
+# robustness). Wired up via hooks/hooks.json (plugin install) or .claude/settings.json
+# (hooks.PreToolUse) for a hand-copied install.
 #
 # ┌─────────────────────────────────────────────────────────────────────────┐
-# │ SHIPPED IN "warn" MODE so it can't surprise-block your work on first run. │
-# │ To turn on real enforcement:                                             │
-# │   1. Set ALLOWED_REGEX below to match YOUR repo's editable directories.  │
-# │   2. Change MODE from "warn" to "block".                                  │
+# │ SHIPPED OFF. As an installed plugin this hook runs in every repo, so it   │
+# │ stays inert until you opt in, per repo, via env vars in that repo's       │
+# │ .claude/settings.json:                                                    │
+# │                                                                           │
+# │   "env": {                                                                │
+# │     "FW_GUARD_MODE": "warn",                    // or "block"             │
+# │     "FW_GUARD_ALLOWED": "(^|/)(src|plans|tests)/"                         │
+# │   }                                                                       │
+# │                                                                           │
+# │ off   = do nothing (default)                                              │
+# │ warn  = log to stderr, allow the write                                    │
+# │ block = deny the write (exit 2)                                           │
 # └─────────────────────────────────────────────────────────────────────────┘
 
-# --- edit these two lines for your repo ---
-MODE="warn"                                    # "warn" = log only, allow | "block" = deny
-ALLOWED_REGEX='(^|/)(src|plans|tests)/'        # paths matching this are allowed
-# ------------------------------------------
+MODE="${FW_GUARD_MODE:-off}"                                  # off | warn | block
+ALLOWED_REGEX="${FW_GUARD_ALLOWED:-(^|/)(src|plans|tests)/}"  # paths matching this are allowed
+
+# Not opted in → stay out of the way entirely.
+[ "$MODE" = "off" ] && exit 0
 
 input="$(cat)"
 # Extract the target path. Prefer jq; fall back to a best-effort grep so the
@@ -43,5 +53,5 @@ if [ "$MODE" = "warn" ]; then
 fi
 
 # MODE=block → deny the tool call. Exit code 2 blocks it; stderr is shown to Claude.
-echo "Blocked by guard-paths hook: '$path' is outside the allowed directories. Adjust ALLOWED_REGEX in .claude/hooks/guard-paths.sh if this path should be editable." >&2
+echo "Blocked by guard-paths hook: '$path' is outside the allowed directories. Adjust FW_GUARD_ALLOWED in this repo's .claude/settings.json if this path should be editable." >&2
 exit 2

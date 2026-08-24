@@ -5,8 +5,10 @@
 > giao cho model rẻ hơn — nên **nhanh hơn và tiết kiệm token hơn** so với để một session
 > mạnh tự làm hết.
 >
-> **Đây là repo gốc (source of truth).** Muốn dùng ở đâu thì copy sang đó (hướng dẫn bên
-> dưới). Muốn nâng cấp thì sửa ở đây rồi copy lại — **không bao giờ sửa bản copy.**
+> **Đây là repo gốc (source of truth)**, đóng gói sẵn thành **Claude Code plugin**:
+> `/plugin marketplace add TrungRN/claude-feature-workflow` → `/plugin install
+> feature-workflow@trungrn`. Có bản mới thì `/plugin update feature-workflow` — không copy tay.
+> Sửa thì sửa ở đây — **không bao giờ sửa bản đã cài.**
 
 ---
 
@@ -56,51 +58,68 @@ kiểm lại, không tin lời tự khai.
 
 ## 2. Cài đặt
 
-**Bản chất chỉ là copy 2 thứ** từ repo này sang nơi bạn muốn dùng:
+Repo này là một **Claude Code plugin** kiêm **marketplace**. Cài một lệnh, cập nhật một lệnh —
+không phải copy tay nữa.
+
+### Cách 1 — Cài như plugin (khuyến nghị) ⭐
+
+Mở Claude Code ở **bất kỳ đâu**, gõ 2 lệnh:
+
+```
+/plugin marketplace add TrungRN/claude-feature-workflow
+/plugin install feature-workflow@trungrn
+```
+
+Rồi **khởi động lại Claude Code**. Xong — skill `feature-workflow`, 4 agent `task-*` và hook
+dashboard có mặt ở **mọi repo** trên máy bạn (scope mặc định là `user`).
+
+Thích dùng terminal thì y hệt, chỉ thêm tiền tố `claude`:
+
+```bash
+claude plugin marketplace add TrungRN/claude-feature-workflow
+claude plugin install feature-workflow@trungrn            # thêm --scope project để chỉ cài cho 1 repo
+```
+
+Kiểm tra: `claude plugin details feature-workflow` — phải thấy `Skills (1)`, `Agents (4)`,
+`Hooks (2)`.
+
+**Cài cho cả team, tự động:** commit vào `.claude/settings.json` của repo:
+
+```json
+{
+  "extraKnownMarketplaces": {
+    "trungrn": {
+      "source": { "source": "github", "repo": "TrungRN/claude-feature-workflow" }
+    }
+  },
+  "enabledPlugins": { "feature-workflow@trungrn": true }
+}
+```
+
+Ai clone repo và mở Claude Code sẽ được hỏi cài — không phải đọc hướng dẫn nào cả.
+
+### Cập nhật bản mới (đây là điểm chính)
+
+```
+/plugin marketplace update trungrn      # kéo bản mới nhất của marketplace về
+/plugin update feature-workflow         # cập nhật plugin, cần restart để áp dụng
+```
+
+Không còn cảnh copy đè, không sợ sót file, không sợ lệch phiên bản: bản đang chạy luôn khớp
+với repo gốc tại thời điểm bạn update.
+
+Gỡ: `/plugin uninstall feature-workflow` (hoặc tạm tắt: `/plugin disable feature-workflow`).
+
+### Cách 2 — Copy tay (chỉ khi không dùng được plugin)
+
+Bản chất là copy 2 thứ vào repo đích:
 
 | Copy cái gì | Từ (repo này) | Sang (nơi muốn dùng) |
 | --- | --- | --- |
-| Thư mục skill | `.claude/skills/feature-workflow/` | `<đích>/.claude/skills/feature-workflow/` |
-| 4 file agent `task-*.md` | `.claude/agents/` | `<đích>/.claude/agents/` |
+| Thư mục skill | `skills/feature-workflow/` | `<đích>/.claude/skills/feature-workflow/` |
+| 4 file agent `task-*.md` | `agents/` | `<đích>/.claude/agents/` |
 
-`<đích>` = repo của bạn, hoặc thư mục `agent-knowledge-base` nếu bạn dùng KB. Cấu trúc sau
-khi copy phải giống hệt bên nguồn. Chọn 1 trong 3 cách dưới đây — kết quả như nhau.
-
-### Cách 1 — Nhờ Claude Code cài hộ (dễ nhất, không cần biết terminal) ⭐
-
-Bạn đã có Claude Code rồi — cứ để nó tự làm. Mở Claude Code ở đâu cũng được, dán câu này và
-sửa 2 đường dẫn cho đúng máy bạn:
-
-> Hãy cài feature-workflow cho tôi: copy thư mục `.claude/skills/feature-workflow` và 4 file
-> `.claude/agents/task-*.md` từ `<đường-dẫn-tới-claude-feature-workflow>` sang
-> `<đường-dẫn-tới-repo-đích>/.claude/` (giữ nguyên cấu trúc; nếu đích đã có
-> `skills/feature-workflow` thì xóa bản cũ trước). Xong thì so sánh lại 2 bên để xác nhận
-> giống hệt nhau.
-
-> 💡 Không nhớ đường dẫn? Kéo-thả thư mục từ File Explorer/Finder vào cửa sổ Claude Code /
-> terminal — đường dẫn sẽ tự hiện ra.
-
-### Cách 2 — Copy tay bằng File Explorer (Windows) / Finder (macOS)
-
-1. **Hiện thư mục ẩn** (thư mục `.claude` bắt đầu bằng dấu chấm nên mặc định bị ẩn):
-   - Windows: mở File Explorer → tab **View** → **Show** → tick **Hidden items**.
-   - macOS: trong Finder nhấn **Cmd + Shift + .** (dấu chấm).
-2. Mở thư mục `claude-feature-workflow` → vào `.claude` → vào `skills` → **copy thư mục
-   `feature-workflow`**.
-3. Sang repo đích: nếu chưa có thư mục `.claude` thì tạo mới (đặt tên có cả dấu chấm đầu);
-   trong đó tạo/mở thư mục `skills` rồi **paste**. Nếu đã có `feature-workflow` cũ ở đó, xóa
-   nó trước khi paste.
-4. Quay lại nguồn, vào `.claude/agents` → chọn **4 file** `task-executor.md`,
-   `task-executor-pro.md`, `task-verifier.md`, `task-verifier-pro.md` → copy → paste vào
-   `<đích>/.claude/agents/` (tạo thư mục nếu chưa có).
-
-   > ⚠️ Copy **4 file lẻ**, đừng copy đè cả thư mục `agents` — trên macOS, paste một thư mục
-   > trùng tên sẽ **thay thế toàn bộ**, làm mất các agent khác sẵn có ở đích (như
-   > `kb-auditor` trong KB).
-
-### Cách 3 — Terminal (cho ai quen dòng lệnh)
-
-macOS / Linux (bash):
+macOS / Linux:
 
 ```bash
 SRC=path/to/claude-feature-workflow
@@ -108,8 +127,8 @@ DICH=path/to/repo-dich          # repo của bạn, hoặc agent-knowledge-base
 
 mkdir -p "$DICH/.claude/skills" "$DICH/.claude/agents"
 rm -rf "$DICH/.claude/skills/feature-workflow"
-cp -R "$SRC/.claude/skills/feature-workflow" "$DICH/.claude/skills/"
-cp "$SRC"/.claude/agents/task-*.md "$DICH/.claude/agents/"
+cp -R "$SRC/skills/feature-workflow" "$DICH/.claude/skills/"
+cp "$SRC"/agents/task-*.md "$DICH/.claude/agents/"
 ```
 
 Windows (PowerShell):
@@ -120,29 +139,25 @@ $DICH = "C:\path\to\repo-dich"
 
 New-Item -ItemType Directory -Force "$DICH\.claude\skills", "$DICH\.claude\agents" | Out-Null
 Remove-Item -Recurse -Force "$DICH\.claude\skills\feature-workflow" -ErrorAction SilentlyContinue
-Copy-Item -Recurse "$SRC\.claude\skills\feature-workflow" "$DICH\.claude\skills\"
-Copy-Item "$SRC\.claude\agents\task-*.md" "$DICH\.claude\agents\"
+Copy-Item -Recurse "$SRC\skills\feature-workflow" "$DICH\.claude\skills\"
+Copy-Item "$SRC\agents\task-*.md" "$DICH\.claude\agents\"
 ```
 
-### Sau khi copy (mọi cách)
+> ⚠️ Copy **4 file lẻ**, đừng copy đè cả thư mục `agents` — trên macOS, paste một thư mục
+> trùng tên sẽ **thay thế toàn bộ**, làm mất các agent khác sẵn có ở đích (như `kb-auditor`
+> trong KB).
 
-1. **Khởi động lại Claude Code** trong repo đích để nó nạp skill/agents mới.
-2. Kiểm tra: hỏi Claude *"What skills and agents are available?"* — phải thấy
-   `feature-workflow` và 4 agent `task-*`.
-3. **Cập nhật bản mới sau này**: lặp lại đúng các bước trên (copy đè). Muốn chắc chắn hai
-   bên khớp nhau, hỏi Claude: *"So sánh `<nguồn>/.claude/skills/feature-workflow` với
-   `<đích>/.claude/skills/feature-workflow`, có giống hệt nhau không?"*
+Khởi động lại Claude Code ở repo đích, rồi hỏi *"What skills and agents are available?"* để
+kiểm tra. Cập nhật về sau = lặp lại đúng các lệnh trên (copy đè).
 
 ### Ghi chú theo từng loại đích
 
-- **Repo bình thường**: xong 2 bước trên là chạy — không cần cấu hình gì. Tuỳ chọn: muốn có
-  "hàng rào" chặn agent sửa file ngoài vùng cho phép, copy thêm `.claude/hooks/guard-paths.sh`
-  + gộp `settings.json` (xem mục 6.3).
-- **agent-knowledge-base**: KB đã tích hợp sẵn (alias `/kb-feature` + host contract), nên
-  copy chỉ là để **cập nhật bản mới**. Đừng copy `hooks/` và `settings.json` vào KB — KB có
-  guardrail riêng. Copy xong, chạy `/kb-install-root` trong KB để làm mới bản engine ở
-  workspace root (nếu bạn dùng tính năng đó).
-- **KB/host kiến trúc khác**: copy như trên, rồi khai báo thêm một "host contract" trong
+- **Repo bình thường**: cài xong là chạy — không cần cấu hình gì. Tuỳ chọn: bật "hàng rào"
+  chặn agent sửa file ngoài vùng cho phép bằng 2 biến môi trường (xem mục 6.3).
+- **agent-knowledge-base**: KB đã tích hợp sẵn (alias `/kb-feature` + host contract). Cài
+  plugin ở scope `user` là KB dùng được ngay. Nếu bạn dùng bản copy trong KB thì cài đè như
+  Cách 2, xong chạy `/kb-install-root` để làm mới bản engine ở workspace root.
+- **KB/host kiến trúc khác**: cài như trên, rồi khai báo thêm một "host contract" trong
   `CLAUDE.md` của host — xem mục 6.1.
 
 ---
@@ -355,7 +370,7 @@ Vài điểm đáng biết:
 - Dựng tay lúc nào cũng được:
 
   ```bash
-  python3 .claude/skills/feature-workflow/scripts/render-dashboard.py plans/google-login
+  python3 <thư-mục-skill>/scripts/render-dashboard.py plans/google-login
   # trỏ vào cả thư mục plans/ thì nó dựng lại cho mọi feature
   ```
 
@@ -370,28 +385,34 @@ Vài điểm đáng biết:
 ## 4. File nào để làm gì (bản đồ repo này)
 
 ```
-.claude/
-├── skills/feature-workflow/        ← SKILL (bộ não điều phối)
-│   ├── SKILL.md                    ← quy trình 6 phase — file quan trọng nhất
-│   ├── references/
-│   │   ├── task-spec-standard.md   ← chuẩn viết task spec "tự-đủ" + checklist
-│   │   └── analysis.md             ← cách phân tích ảnh hưởng (có KB / không KB)
-│   ├── assets/                     ← 5 khuôn: task, PLAN, testcases, PROGRESS,
-│   │                                  SKILL-FEEDBACK (góp ý về chính skill — mục 6.4)
-│   └── scripts/
-│       └── render-dashboard.py     ← dựng dashboard.html từ markdown (Python, 0 token)
-├── agents/                         ← 4 SUBAGENT (thợ + giám khảo)
-│   ├── task-executor.md            ← thợ Haiku (task cơ học)
-│   ├── task-executor-pro.md        ← thợ Sonnet (task khó / tạo mới)
-│   ├── task-verifier.md            ← giám khảo Sonnet (không sửa file; lái được web/mobile)
-│   └── task-verifier-pro.md        ← giám khảo Opus (task risk: high)
-├── commands/
-│   └── harvest-feedback.md         ← CHỈ ở repo gốc: áp SKILL-FEEDBACK.md vào skill (mục 6.4)
-├── hooks/
-│   ├── guard-paths.sh              ← (tuỳ chọn) hàng rào chặn ghi ngoài vùng cho phép
-│   └── render-dashboard.sh         ← (tuỳ chọn) tự dựng lại dashboard sau mỗi lần ghi plan
-└── settings.json                   ← (tuỳ chọn) khai báo 2 hook trên
+.claude-plugin/
+├── plugin.json                     ← manifest plugin (tên, version, tác giả)
+└── marketplace.json                ← repo này tự làm marketplace của chính nó
+skills/feature-workflow/            ← SKILL (bộ não điều phối)
+├── SKILL.md                        ← quy trình 6 phase — file quan trọng nhất
+├── references/
+│   ├── task-spec-standard.md       ← chuẩn viết task spec "tự-đủ" + checklist
+│   └── analysis.md                 ← cách phân tích ảnh hưởng (có KB / không KB)
+├── assets/                         ← 5 khuôn: task, PLAN, testcases, PROGRESS,
+│                                      SKILL-FEEDBACK (góp ý về chính skill — mục 6.4)
+└── scripts/
+    └── render-dashboard.py         ← dựng dashboard.html từ markdown (Python, 0 token)
+agents/                             ← 4 SUBAGENT (thợ + giám khảo)
+├── task-executor.md                ← thợ Haiku (task cơ học)
+├── task-executor-pro.md            ← thợ Sonnet (task khó / tạo mới)
+├── task-verifier.md                ← giám khảo Sonnet (không sửa file; lái được web/mobile)
+└── task-verifier-pro.md            ← giám khảo Opus (task risk: high)
+hooks/
+├── hooks.json                      ← khai báo 2 hook dưới đây cho plugin
+├── guard-paths.sh                  ← hàng rào chặn ghi ngoài vùng cho phép (mặc định TẮT)
+└── render-dashboard.sh             ← tự dựng lại dashboard sau mỗi lần ghi plan
+.claude/commands/
+└── harvest-feedback.md             ← CHỈ ở repo gốc, KHÔNG ship theo plugin: áp
+                                       SKILL-FEEDBACK.md vào skill (mục 6.4)
 ```
+
+Ba thư mục `skills/`, `agents/`, `hooks/` nằm ngay ở gốc repo vì đó là vị trí mặc định mà
+Claude Code tìm khi nạp một plugin — nhờ vậy `plugin.json` không cần khai báo đường dẫn nào.
 
 Ai đọc file nào: **bạn** chỉ cần README này. **Session chính** đọc SKILL.md + references.
 **Executor/verifier** chỉ đọc task spec + SYSTEM-CONTEXT.md được đưa — chúng không thấy gì
@@ -416,7 +437,7 @@ Kết quả nhận diện được ghi vào mục `## Environment` của `PLAN.m
 resume được mà không phải đoán lại.
 
 **Hệ quả cho bạn:** mọi thứ đặc thù của từng nơi nằm **ngoài** skill (trong CLAUDE.md của
-host). Skill là một bản duy nhất, sửa ở repo này, copy đè là xong.
+host). Skill là một bản duy nhất, sửa ở repo này, `/plugin update` là xong.
 
 ---
 
@@ -467,16 +488,30 @@ cho tất cả.
   Playwright cũng bị chặn qua `disallowedTools`). Executor bị hook chặn thì báo lại, không
   lách. Skill không bao giờ vòng qua hook (kể cả bằng Bash redirect).
 
-Repo này kèm hook mẫu cho repo đơn lẻ: `guard-paths.sh` chặn Write/Edit ngoài allowlist,
-ship ở chế độ `warn` (chỉ cảnh báo). Bật thật: sửa `ALLOWED_REGEX` cho khớp repo bạn, đổi
-`MODE="block"`, giữ cờ thực thi (`chmod +x`). Repo đã có `settings.json` thì gộp khối
-`hooks` vào, đừng ghi đè.
+Plugin ship sẵn 2 hook (cài plugin là có luôn, không phải làm gì thêm).
 
-Hook thứ hai, `render-dashboard.sh` (PostToolUse), thuần tiện ích: hễ có file `.md` nào trong
-`plans/` bị ghi — kể cả do subagent ghi — nó dựng lại `dashboard.html` của feature đó. Không
-chặn gì, luôn `exit 0`, không tốn token. Cài giống hook trên: copy file + gộp khối
-`hooks.PostToolUse` trong `settings.json`. Không cài cũng được, skill vẫn tự dựng ở các mốc
-báo cáo (mục 3d).
+`guard-paths.sh` (PreToolUse) chặn Write/Edit ra ngoài allowlist. Vì plugin chạy ở **mọi
+repo**, nó **mặc định TẮT** — bật theo từng repo bằng 2 biến môi trường trong
+`.claude/settings.json` của repo đó:
+
+```json
+{
+  "env": {
+    "FW_GUARD_MODE": "warn",
+    "FW_GUARD_ALLOWED": "(^|/)(src|plans|tests)/"
+  }
+}
+```
+
+`FW_GUARD_MODE`: `off` (mặc định) → không làm gì · `warn` → chỉ cảnh báo, vẫn cho ghi ·
+`block` → chặn thật (exit 2). `FW_GUARD_ALLOWED` là regex các đường dẫn được phép ghi. Bật
+`warn` trước vài ngày, thấy log đúng ý rồi hãy đổi sang `block`.
+
+`render-dashboard.sh` (PostToolUse) thuần tiện ích: hễ có file `.md` nào trong `plans/` bị
+ghi — kể cả do subagent ghi — nó dựng lại `dashboard.html` của feature đó. Không chặn gì,
+luôn `exit 0`, không tốn token, không cần cấu hình. (Cài kiểu copy tay thì 2 hook này không
+tự có — copy `hooks/*.sh` vào `<đích>/.claude/hooks/` rồi gộp khối `hooks` vào
+`settings.json` của repo đích.)
 
 ### 6.4. Skill tự cải tiến: ghi nhận khi chạy, áp vào repo gốc sau
 
@@ -492,14 +527,14 @@ không phủ được tình huống vừa gặp. Hai thứ đó đi hai đườn
 **Skill không bao giờ tự sửa file của chính nó khi đang chạy.** Ba lý do, và đây là chỗ đáng cân
 nhắc nhất nếu bạn muốn "tự improve" theo nghĩa tự động:
 
-1. Bản đang chạy là **bản copy** — sửa vào đó thì lần copy đè tiếp theo xoá sạch, mà bạn còn
-   không biết là mình vừa mất gì.
+1. Bản đang chạy là **bản cài** (thư mục plugin, hoặc bản copy) — sửa vào đó thì lần
+   `/plugin update` tiếp theo xoá sạch, mà bạn còn không biết là mình vừa mất gì.
 2. Tự sửa luật ngay giữa lúc đang thi hành luật đó, **không có ai review**.
 3. Sửa sai một lần thì hỏng **mọi feature sau**, không phải chỉ feature đang làm. Rủi ro không
    đối xứng: được ít, mất nhiều.
 
 Nên nó **đề xuất**, không **vá**. File `SKILL-FEEDBACK.md` nằm ở thư mục `plans/`, **ngoài**
-`.claude/skills/`, nên copy đè bản skill mới không đụng tới nó — feedback tích luỹ qua nhiều
+thư mục skill, nên cập nhật bản skill mới không đụng tới nó — feedback tích luỹ qua nhiều
 feature và sống sót qua các lần nâng cấp. Mỗi mục ghi: sai ở file/mục nào của skill, triệu chứng
 cụ thể, vì sao sẽ lặp lại, và **đề xuất sửa chính xác ra sao**.
 
@@ -514,8 +549,8 @@ lần, thứ thuộc về dự án chứ không thuộc workflow, thứ chỉ đ
 một quyết định thiết kế có chủ đích), trình bạn duyệt từng nhóm rồi mới sửa, cuối cùng đánh dấu
 `applied <ngày>` để lần sau không áp lại. Nó chỉ có ở repo gốc, không copy sang host.
 
-Sau khi sửa ở gốc, các host chỉ nhận thay đổi khi bạn **copy lại** (mục 2) — đúng như mọi thay
-đổi khác của skill.
+Sau khi sửa ở gốc, các host chỉ nhận thay đổi khi bạn **phát hành bản mới** (mục 6.6) và họ
+chạy `/plugin update feature-workflow` — đúng như mọi thay đổi khác của skill.
 
 ### 6.5. Checklist chất lượng của một task spec
 
@@ -523,6 +558,24 @@ Spec đạt khi: executor đọc **mỗi spec đó** là làm đúng được �
 inline, convention ghi rõ (không nói "theo chuẩn dự án"), có "Pattern to mirror" khi tạo
 file mới, Definition of Done kiểm được bằng mắt/lệnh, self-check là lệnh nguyên văn. Chuẩn
 đầy đủ + checklist: `references/task-spec-standard.md`.
+
+---
+
+### 6.6. Phát hành bản mới (chỉ maintainer)
+
+Sau khi sửa skill/agent/hook ở repo này:
+
+1. Tăng `version` trong `.claude-plugin/plugin.json` (semver: sửa lỗi → patch, thêm tính năng
+   → minor, đổi thứ phá vỡ cách dùng cũ → major).
+2. Kiểm tra manifest: `claude plugin validate --strict .claude-plugin/plugin.json` (và
+   `claude plugin validate --strict .` cho marketplace).
+3. Commit + push lên `main`. Người dùng chạy `/plugin marketplace update trungrn` +
+   `/plugin update feature-workflow` là nhận được.
+4. Muốn có mốc phát hành trong git: `claude plugin tag` — nó tạo tag `feature-workflow--v<version>`
+   và kiểm tra `plugin.json` khớp với entry trong `marketplace.json`.
+
+Tự thử trước khi push: `claude plugin marketplace add <đường-dẫn-tuyệt-đối-tới-repo-này>` rồi
+cài từ marketplace local đó — nó đọc thẳng thư mục nên sửa file là thấy ngay.
 
 ---
 
@@ -550,8 +603,11 @@ file mới, Definition of Done kiểm được bằng mắt/lệnh, self-check l
   vẫn chạy bình thường, task đã bật sẽ ra `NEEDS-HUMAN` để bạn tự kiểm — vẫn tốt hơn `PASS` giả.
 - **Project của tôi không có giao diện?** Không đổi gì cả: UI surface là `none`, mọi task là
   `ui_verify: none`, skill không hỏi MCP lần nào.
-- **Thiếu agents thì sao?** Skill sẽ báo và đề nghị: cài từ gói này, hoặc chạy chế độ
+- **Thiếu agents thì sao?** Skill sẽ báo và đề nghị: cài plugin (mục 2), hoặc chạy chế độ
   degraded (session chính tự làm tuần tự theo spec).
+- **Cài plugin rồi mà Claude không thấy skill?** Phải **restart** Claude Code sau khi cài.
+  Kiểm tra bằng `claude plugin list` (phải `enabled`) và `claude plugin details feature-workflow`
+  (phải đủ 1 skill + 4 agents + 2 hooks).
 - **Task fail rồi sửa lại thì có xem được không?** Được, không phải lục nhật ký: thẻ task hiện
   `FAIL ×n` và số lượt chạy, mở ra có timeline từng bước kèm lý do fail; đầu trang có thẻ đỏ
   "Cần chú ý" gom hết task trầy trật lại một chỗ. Xem mục 3d.
@@ -565,12 +621,13 @@ file mới, Definition of Done kiểm được bằng mắt/lệnh, self-check l
   hỏng ngầm nhất. Nên: markdown cho máy, HTML sinh ra cho người, một chiều, không bao giờ lệch.
 - **Skill có tự sửa chính nó được không?** Có ghi nhận, không tự vá. Gặp lỗi của workflow (khuôn
   thiếu field, hướng dẫn mơ hồ làm executor lệch) nó ghi một mục vào `plans/SKILL-FEEDBACK.md`
-  kèm đề xuất sửa cụ thể; bạn chạy `/harvest-feedback` ở repo gốc để duyệt và áp. Tự sửa bản copy
-  đang chạy thì vừa bị copy đè xoá mất, vừa không ai review, vừa hỏng luôn mọi feature sau — xem
-  mục 6.4.
+  kèm đề xuất sửa cụ thể; bạn chạy `/harvest-feedback` ở repo gốc để duyệt và áp. Tự sửa bản đang
+  chạy thì vừa bị `/plugin update` xoá mất, vừa không ai review, vừa hỏng luôn mọi feature sau —
+  xem mục 6.4.
 - **Sao lúc nó trả lời tiếng Việt, lúc tiếng Anh?** Trước đây nó đoán theo "ngôn ngữ của yêu
   cầu", nên bạn dán một ticket tiếng Anh là nó chuyển hết sang tiếng Anh. Nay có thứ tự ưu tiên
   rõ ràng và nó phân biệt *lời bạn viết* với *tài liệu bạn dán*. Muốn chắc chắn ở mọi session
   mới: thêm một dòng "Luôn trả lời tôi bằng tiếng Việt." vào `~/.claude/CLAUDE.md` — xem mục 3c.
-- **Sửa skill ở bản copy được không?** Đừng. Sửa ở repo này rồi copy đè (mục 2), không thì
-  các nơi lệch nhau — đúng cái vấn đề kiến trúc này sinh ra để tránh.
+- **Sửa skill ở bản đã cài được không?** Đừng. Thư mục plugin đã cài sẽ bị ghi đè ở lần
+  `/plugin update` kế tiếp. Sửa ở repo này rồi phát hành bản mới (mục 6.6), không thì các nơi
+  lệch nhau — đúng cái vấn đề kiến trúc này sinh ra để tránh.

@@ -1,0 +1,16 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "trungrn",
+  "owner": {
+    "name": "TrungRN",
+    "email": "trungrn67@gmail.com"
+  },
+  "description": "Claude Code plugins by TrungRN — spec-driven feature planning and execution workflows.",
+  "plugins": [
+    {
+      "name": "feature-workflow",
+      "source": "./",
+      "description": "Feature request -> plan -> testcases -> task specs -> cheap-model execution -> independent verification, resumable end to end."
+    }
+  ]
+}

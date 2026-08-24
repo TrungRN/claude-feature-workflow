@@ -4,11 +4,11 @@ Defects found in **the workflow itself** while running it, written down so the n
 not hit them again. This is not a bug list for the product being built — those belong in the
 plan's testcases or in `SYSTEM-CONTEXT.md § Lessons learned`.
 
-**Where this file lives and why:** at the plans root, *outside* `.claude/skills/`. Re-copying the
-skill from its source repo overwrites the skill directory; this file is never touched, so
-feedback accumulates across features and survives upgrades.
+**Where this file lives and why:** at the plans root, *outside* the installed skill directory.
+Updating the skill (`/plugin update`, or re-copying it) overwrites that directory; this file is
+never touched, so feedback accumulates across features and survives upgrades.
 
-**How it gets applied:** the skill never edits its own installed copy — see the source repo's
+**How it gets applied:** the skill never edits its own installed files — see the source repo's
 README. Open the source repo (`claude-feature-workflow`), point a session at this file, and let
 it turn the `open` entries into real edits. Mark each entry `applied <date>` once it lands there,
 so the same proposal is not re-applied on the next harvest.

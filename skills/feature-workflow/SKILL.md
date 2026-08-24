@@ -386,13 +386,15 @@ python3 <this-skill-dir>/scripts/render-dashboard.py <the plan dir, or any file 
   time, and say it is generated — edits belong in the markdown, not in the HTML.
 - It **writes** exactly one path — `dashboard.html` inside that plan directory — and only reads
   everything else. It is not a way around a write guard; never point it anywhere else.
-- Hosts that install `hooks/render-dashboard.sh` (PostToolUse) get the refresh automatically on
-  every write to a plan markdown file, including writes made by subagents.
+- Hosts with the render-dashboard PostToolUse hook (shipped with the plugin, or copied into
+  `.claude/hooks/`) get the refresh automatically on every write to a plan markdown file,
+  including writes made by subagents.
 - No `python3` on the machine, or the script is missing → skip it and say so once. Nothing in
   this workflow depends on the dashboard.
 
-If the executor/verifier agents are not installed in this host (`.claude/agents/`), say so and
-offer: (a) install them from this package, or (b) degraded mode — execute the tasks yourself,
+If the executor/verifier agents are not available in this host (installed with the plugin, or
+copied into `.claude/agents/`), say so and offer: (a) install them from this package, or
+(b) degraded mode — execute the tasks yourself,
 sequentially, still spec-by-spec with self-checks.
 
 State once to the user: multi-agent execution uses several times the tokens of a single
@@ -428,5 +430,5 @@ that isn't quoted in it?* Fix any task where the answer is no.
 - `assets/SKILL-FEEDBACK-template.md` — copy to `<plans root>/SKILL-FEEDBACK.md` the first time
   this workflow itself proves defective. See **Improving this skill**.
 
-Dispatched by this skill (in `.claude/agents/`): `task-executor` (Haiku), `task-executor-pro`
+Dispatched by this skill (shipped alongside it): `task-executor` (Haiku), `task-executor-pro`
 (Sonnet), `task-verifier` (Sonnet), `task-verifier-pro` (Opus, `risk: high`).
