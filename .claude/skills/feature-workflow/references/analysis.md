@@ -105,4 +105,11 @@ In single-repo mode, drop the per-repo split and the contracts section if there 
 
 ## Constraints / do-not-break
 - …
+
+## Lessons learned
+<!-- Starts EMPTY. During execution the orchestrator appends one line per FAIL whose cause could
+     hit another task too (a convention, a lint rule, a gotcha the plan didn't state). Executors
+     run in isolated contexts and all read this file, so this is the only place a lesson
+     propagates. State each as a rule, not as a story about the task that hit it. -->
+- (task-00X) <rule a fresh executor can follow without knowing what happened>
 ```

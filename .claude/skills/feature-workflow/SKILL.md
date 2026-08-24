@@ -107,6 +107,11 @@ Resolve them in this order:
 - **Checkpoint before continuing.** `PROGRESS.md` and the `status` fields must describe reality
   before the next unit of work starts, not after. A run can be cut off at any moment; what's on
   disk is all that survives.
+- **A repeatable failure is a missing rule.** Executors run in isolated contexts, so a mistake
+  one of them makes will be made again by the next one unless the rule is written down. When a
+  FAIL turns out to be a convention or a gotcha rather than a one-off slip, append it to
+  `SYSTEM-CONTEXT.md` § **Lessons learned** *before* the next dispatch — that file is the only
+  thing every executor reads, so this is the one place a lesson actually propagates.
 - **Ask when ambiguous.** Scope, UX, which repos/modules are in or out, contract shape — STOP
   and ask with concrete options before planning further. Don't guess architecture-significant
   choices; don't ask what the code or KB already answers.
@@ -158,7 +163,8 @@ Write `plans/<slug>/SYSTEM-CONTEXT.md` per `references/analysis.md`: relevant mo
 types (quoted inline), the **conventions** the feature must follow (from CLAUDE.md files,
 rules docs, observed code — per repo in kb-workspace mode), the **verbatim build/test/lint
 commands**, integration points/contracts, and constraints. This file is the executors' only
-source of house style — make it earn that.
+source of house style — make it earn that. End it with an empty `## Lessons learned` section:
+Phase 5 appends to it whenever a failure exposes a rule the plan failed to state.
 
 ## Phase 4 — Decompose, tier, write testcases and the plan
 
@@ -187,6 +193,7 @@ source of house style — make it earn that.
   (Phase 0 facts), affected repos/modules, impact, ordered task table
   (`repo`/`model`/`risk`/`ui_verify`/`status`), parallelization groups, global acceptance
   criteria, the testcase gate, and after-merge steps from the host contract.
+- Render the dashboard (see **Dashboard** below) and hand the user its path with the plan.
 - **STOP.** Present plan + testcases for approval. Implementation does not start until the
   user agrees to the testcases (tick the gate in PLAN.md).
 
@@ -261,8 +268,10 @@ Only after explicit user approval:
 4. **Verify.** Every completed task goes to **task-verifier**; `risk: high` tasks go to
    **task-verifier-pro** (Opus). Three verdicts:
    - **PASS** → task `done`.
-   - **FAIL** → re-dispatch the same-tier executor with the verifier's feedback appended; after
-     2 fails, escalate the executor one tier or surface to the user.
+   - **FAIL** → first ask: *could another task hit this same problem?* If yes, append one line
+     to `SYSTEM-CONTEXT.md` § **Lessons learned** — stated as a rule a fresh executor can follow,
+     not as a story about this task. Then re-dispatch the same-tier executor with the verifier's
+     feedback appended; after 2 fails, escalate the executor one tier or surface to the user.
    - **NEEDS-HUMAN** → the code passed every automated check but a user-visible criterion could
      not be machine-verified. Set the task to `needs-human` and add a row to PLAN.md
      `## Manual verification queue` with the criterion, the reason, and the verifier's manual
@@ -272,7 +281,8 @@ Only after explicit user approval:
    Record every dispatch and every verdict in PROGRESS.md as it happens, and apply the status
    writes.
 5. **Stop and report.** At the end of each unit — including in `all` mode when a stop condition
-   below fires — stop and give the user a compact report: which tasks finished, each verdict,
+   below fires — stop, re-render the dashboard (see **Dashboard**), and give the user a compact
+   report: which tasks finished, each verdict,
    the files that changed, and the command to review them (`git -C <repo> diff`). List any
    `needs-human` tasks **separately from the `done` ones**, each with what still needs checking
    by hand — burying them in the done pile is how an unverified feature ships. Say what they
@@ -304,7 +314,7 @@ session dies between the two, the files must not be lying about what happened.
 | A task is dispatched | that task → `in-progress` in **both** the PLAN.md table **and** its spec frontmatter |
 | Verifier returns PASS | that task → `done` in both places |
 | Verifier returns NEEDS-HUMAN | that task → `needs-human` in both places; add a row to PLAN.md `## Manual verification queue` (criterion · why unverified · manual steps). Dependents may still run |
-| Verifier returns FAIL (1st) | leave `in-progress`; journal the specific failure and the retry count in PROGRESS.md |
+| Verifier returns FAIL (1st) | leave `in-progress`; journal the specific failure and the retry count in PROGRESS.md; if the cause can repeat elsewhere, append it to SYSTEM-CONTEXT.md § Lessons learned **before** re-dispatching |
 | 2nd FAIL, executor blocked, or a denied tool call | that task → `blocked` in both places; stop |
 | No tasks left | PLAN.md `Status:` → `done` (or `blocked`); tick the `## After execution` boxes — except the Manual verification queue box, which stays unticked until the user confirms those checks |
 
@@ -312,6 +322,32 @@ session dies between the two, the files must not be lying about what happened.
 dispatch and each verdict, and rewrite its HANDOFF block at the same time so it always describes
 the present moment. That block is what a fresh session — or a different AI, or a human with no
 access to this workflow — uses to carry on, so keep it self-contained and absolute-path'd.
+
+## Dashboard — the plan as one HTML page
+
+The markdown files stay the source of truth: agents read and write those, and only those. On
+top of them, `scripts/render-dashboard.py` (stdlib Python 3, no dependencies) builds **one**
+derived file for the *user* — `plans/<slug>/dashboard.html`: task cards with status/risk/model
+badges, the parallel groups, testcases cross-linked to the tasks that cover them, the manual
+verification queue, and the HANDOFF block with a copy button. It also reads the PROGRESS.md
+journal back: each task card carries its own attempt/FAIL count and a timeline of what happened
+to it, tasks that failed or stalled get a **Needs attention** card, and § Lessons learned is
+hoisted out of SYSTEM-CONTEXT.md to the top. No agent ever reads that file, so
+it costs no tokens beyond a single Bash call.
+
+```bash
+python3 <this-skill-dir>/scripts/render-dashboard.py <the plan dir, or any file in it> --quiet
+```
+
+- Run it when Phase 4 finishes PLAN.md, and again at each **Stop and report** in Phase 5, so the
+  page never shows a status the files have moved past. Give the user the absolute path the first
+  time, and say it is generated — edits belong in the markdown, not in the HTML.
+- It **writes** exactly one path — `dashboard.html` inside that plan directory — and only reads
+  everything else. It is not a way around a write guard; never point it anywhere else.
+- Hosts that install `hooks/render-dashboard.sh` (PostToolUse) get the refresh automatically on
+  every write to a plan markdown file, including writes made by subagents.
+- No `python3` on the machine, or the script is missing → skip it and say so once. Nothing in
+  this workflow depends on the dashboard.
 
 If the executor/verifier agents are not installed in this host (`.claude/agents/`), say so and
 offer: (a) install them from this package, or (b) degraded mode — execute the tasks yourself,
@@ -345,6 +381,8 @@ that isn't quoted in it?* Fix any task where the answer is no.
 - `assets/testcases-template.md` — copy for testcases.md (unless the host names its own).
 - `assets/PROGRESS-template.md` — copy for PROGRESS.md at the start of Phase 5; the execution
   journal + the HANDOFF block that makes a run resumable.
+- `scripts/render-dashboard.py` — builds `plans/<slug>/dashboard.html` from the markdown. Run
+  it, never read it.
 
 Dispatched by this skill (in `.claude/agents/`): `task-executor` (Haiku), `task-executor-pro`
 (Sonnet), `task-verifier` (Sonnet), `task-verifier-pro` (Opus, `risk: high`).

@@ -42,6 +42,7 @@ _Drafted: <YYYY-MM-DD> · Status: draft | awaiting-approval | executing | done |
 - Testcases (agreed BEFORE implementation): `./testcases.md`
 - Task specs: `./tasks/`
 - Execution trail (created at the start of execution): `./PROGRESS.md`
+- Readable view of all of the above, generated — do not edit: `./dashboard.html`
 
 ## Global acceptance criteria
 - [ ] <feature-level outcome 1>

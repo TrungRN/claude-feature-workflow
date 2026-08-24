@@ -168,6 +168,7 @@ plans/google-login/
 ├── SYSTEM-CONTEXT.md    ← convention + lệnh build/test cho executor
 ├── testcases.md         ← testcase — CHỐT TRƯỚC KHI CODE
 ├── PROGRESS.md          ← (sinh ra khi bắt đầu chạy) nhật ký + khối bàn giao
+├── dashboard.html       ← BẠN ĐỌC CÁI NÀY — 1 trang gộp tất cả (sinh tự động, xem 3d)
 └── tasks/
     ├── task-001-….md    ← mỗi task một spec tự-đủ
     └── task-002-….md
@@ -195,6 +196,24 @@ một task fail lần 2, bị blocked, hoặc bị hook chặn ghi.
 
 Trạng thái được ghi ngay lúc nó đổi — `Status:` đầu `PLAN.md`, cột `status` trong bảng task,
 và `status:` trong frontmatter mỗi spec — nên mở file ra là biết đang tới đâu.
+
+**Task fail thì sao?** Verifier trả `FAIL` kèm lý do cụ thể; orchestrator gắn lý do đó vào lần
+dispatch lại của **chính task đó**. Fail lần 2 thì dừng hẳn để bạn xem. Nhưng quan trọng hơn:
+nếu nguyên nhân là thứ **task khác cũng có thể vấp** (một convention, một rule lint, một cái bẫy
+mà plan quên ghi), nó được ghi thêm một dòng vào `SYSTEM-CONTEXT.md` mục **`## Lessons learned`**
+*trước khi* dispatch tiếp.
+
+Vì sao chỗ đó: executor chạy trong context cô lập, không nhớ gì về các task trước, và
+`SYSTEM-CONTEXT.md` là file **duy nhất** task nào cũng được đưa. Ghi vào đó nghĩa là mọi task sau
+tự động biết — thay vì mỗi con Haiku lại vấp lại đúng hòn đá cũ. Ví dụ thật:
+
+> - (task-002) Lỗi domain **phải** ném ra khỏi handler, không `catch` rồi trả 200 — tầng
+>   `errorMiddleware` mới là chỗ dịch sang mã HTTP.
+> - (task-004) Import type luôn viết `import type { X }`, không dùng `import { type X }` —
+>   ESLint rule `consistent-type-imports` chặn dạng thứ hai.
+
+Lỗi lặt vặt (gõ nhầm, quên một dòng) thì **không** ghi — mục này chỉ nhận thứ tổng quát hoá được,
+để nó không phình thành bãi rác.
 
 **Hết token / đóng máy giữa chừng?** `PROGRESS.md` ghi nhật ký từng lần dispatch và từng kết
 quả verify, cuối file luôn có khối **HANDOFF** mô tả: đang đứng ở đâu, task kế tiếp là gì,
@@ -275,6 +294,56 @@ giữa các agent, trong khi dịch văn xuôi thì không mất gì. Ngôn ng�
 
 ---
 
+## 3d. Đọc plan bằng 1 trang HTML (`dashboard.html`)
+
+File markdown vẫn là **bản gốc** — agent đọc và ghi vào đó. Nhưng đọc chục file `.md` rời rạc
+thì nản, nên skill sinh thêm **một** file duy nhất để bạn xem:
+`plans/<tên-feature>/dashboard.html`. Mở bằng double-click, không cần server, không cần mạng.
+
+Trong đó có:
+
+| Phần | Bạn thấy gì |
+|---|---|
+| Đầu trang | tên feature, `Status`, thanh tiến độ (bao nhiêu task xong / đang chạy / blocked) |
+| Cảnh báo đỏ | `Manual verification queue` — những gì máy chưa xác nhận, nổi lên trên cùng |
+| Task | mỗi task một thẻ gấp/mở, kèm badge `status` · `model` · `risk` · `ui_verify`, phụ thuộc và "mở khoá" task nào, ô lọc để tìm nhanh |
+| Nhóm song song | các task chạy song song được xếp thành cột |
+| Testcase | bảng testcase; mọi chỗ nhắc `TC-3` trong task đều **bấm được** để nhảy đúng dòng |
+| Tiến độ | khối `HANDOFF` ghim sẵn kèm nút **Copy HANDOFF** (để dán sang AI khác), và nhật ký chạy |
+| Cần chú ý | thẻ đỏ liệt kê task từng `FAIL` hoặc đang tắc: chạy mấy lượt, fail mấy lần, **lỗi lần cuối là gì** |
+| Bài học | mục `Lessons learned` được kéo lên đầu trang — thứ mọi executor sau đều đọc |
+
+Riêng chuyện fail/chạy lại, mỗi thẻ task còn có: badge `FAIL ×2` · `⟲ 3 lượt chạy` ngay trên đầu
+thẻ (nên nhìn danh sách là biết task nào trầy trật), và bên trong là **Diễn biến của task này** —
+timeline dispatch → FAIL → dispatch (retry 1) → PASS kèm agent nào chạy và ghi chú lỗi. Tất cả
+đọc ngược từ nhật ký `PROGRESS.md`, không cần agent ghi thêm gì.
+
+Vài điểm đáng biết:
+
+- **Không tốn token.** Nó do một script Python (`scripts/render-dashboard.py`, chỉ dùng thư
+  viện chuẩn) dựng ra, không phải do model viết. Agent **không bao giờ đọc** file này — chúng
+  vẫn chỉ đọc markdown, nên chi phí và độ chính xác của phần thực thi không đổi.
+- **Đừng sửa file HTML** — sửa markdown rồi dựng lại; mọi thay đổi trong HTML sẽ bị ghi đè.
+- **Co giãn theo bề rộng cửa sổ.** Dưới ~1080px thanh bên thu thành một hàng link dính trên
+  đỉnh; dưới ~760px các bảng nhiều cột (task, testcase, nhật ký) **xếp dọc thành thẻ** thay vì
+  cuộn ngang — nên không có cột nào bị cắt mất bên phải, đọc trên điện thoại vẫn đủ.
+- **Tự cập nhật** nếu bạn cài hook `render-dashboard.sh` (mục 6.3). Không cài hook thì skill
+  vẫn tự dựng lại ở 2 thời điểm: khi lập xong plan, và sau mỗi lần dừng để báo cáo.
+- Dựng tay lúc nào cũng được:
+
+  ```bash
+  python3 .claude/skills/feature-workflow/scripts/render-dashboard.py plans/google-login
+  # trỏ vào cả thư mục plans/ thì nó dựng lại cho mọi feature
+  ```
+
+- **Nó bắt lỗi lệch trạng thái**: nếu bảng task trong `PLAN.md` ghi `in-progress` mà frontmatter
+  của spec ghi `todo`, thẻ task hiện cảnh báo vàng — đúng loại lỗi khó thấy khi đọc file rời.
+- Máy không có `python3` thì bỏ qua, workflow chạy bình thường như trước.
+- Muốn Git sạch thì thêm `plans/**/dashboard.html` vào `.gitignore` — nó là file sinh ra, dựng
+  lại lúc nào cũng được.
+
+---
+
 ## 4. File nào để làm gì (bản đồ repo này)
 
 ```
@@ -284,14 +353,18 @@ giữa các agent, trong khi dịch văn xuôi thì không mất gì. Ngôn ng�
 │   ├── references/
 │   │   ├── task-spec-standard.md   ← chuẩn viết task spec "tự-đủ" + checklist
 │   │   └── analysis.md             ← cách phân tích ảnh hưởng (có KB / không KB)
-│   └── assets/                     ← 4 khuôn: task, PLAN, testcases, PROGRESS
+│   ├── assets/                     ← 4 khuôn: task, PLAN, testcases, PROGRESS
+│   └── scripts/
+│       └── render-dashboard.py     ← dựng dashboard.html từ markdown (Python, 0 token)
 ├── agents/                         ← 4 SUBAGENT (thợ + giám khảo)
 │   ├── task-executor.md            ← thợ Haiku (task cơ học)
 │   ├── task-executor-pro.md        ← thợ Sonnet (task khó / tạo mới)
 │   ├── task-verifier.md            ← giám khảo Sonnet (không sửa file; lái được web/mobile)
 │   └── task-verifier-pro.md        ← giám khảo Opus (task risk: high)
-├── hooks/guard-paths.sh            ← (tuỳ chọn) hàng rào chặn ghi ngoài vùng cho phép
-└── settings.json                   ← (tuỳ chọn) khai báo hook trên
+├── hooks/
+│   ├── guard-paths.sh              ← (tuỳ chọn) hàng rào chặn ghi ngoài vùng cho phép
+│   └── render-dashboard.sh         ← (tuỳ chọn) tự dựng lại dashboard sau mỗi lần ghi plan
+└── settings.json                   ← (tuỳ chọn) khai báo 2 hook trên
 ```
 
 Ai đọc file nào: **bạn** chỉ cần README này. **Session chính** đọc SKILL.md + references.
@@ -372,6 +445,12 @@ ship ở chế độ `warn` (chỉ cảnh báo). Bật thật: sửa `ALLOWED_RE
 `MODE="block"`, giữ cờ thực thi (`chmod +x`). Repo đã có `settings.json` thì gộp khối
 `hooks` vào, đừng ghi đè.
 
+Hook thứ hai, `render-dashboard.sh` (PostToolUse), thuần tiện ích: hễ có file `.md` nào trong
+`plans/` bị ghi — kể cả do subagent ghi — nó dựng lại `dashboard.html` của feature đó. Không
+chặn gì, luôn `exit 0`, không tốn token. Cài giống hook trên: copy file + gộp khối
+`hooks.PostToolUse` trong `settings.json`. Không cài cũng được, skill vẫn tự dựng ở các mốc
+báo cáo (mục 3d).
+
 ### 6.4. Checklist chất lượng của một task spec
 
 Spec đạt khi: executor đọc **mỗi spec đó** là làm đúng được — code liên quan đã trích
@@ -407,5 +486,16 @@ file mới, Definition of Done kiểm được bằng mắt/lệnh, self-check l
   `ui_verify: none`, skill không hỏi MCP lần nào.
 - **Thiếu agents thì sao?** Skill sẽ báo và đề nghị: cài từ gói này, hoặc chạy chế độ
   degraded (session chính tự làm tuần tự theo spec).
+- **Task fail rồi sửa lại thì có xem được không?** Được, không phải lục nhật ký: thẻ task hiện
+  `FAIL ×n` và số lượt chạy, mở ra có timeline từng bước kèm lý do fail; đầu trang có thẻ đỏ
+  "Cần chú ý" gom hết task trầy trật lại một chỗ. Xem mục 3d.
+- **Một task fail vì lý do gì đó, các task sau có tránh được không?** Có, nếu lý do đó tổng quát
+  hoá được — nó được ghi vào `SYSTEM-CONTEXT.md § Lessons learned`, file mà **mọi** executor đều
+  đọc, nên task sau biết trước. Lỗi lặt vặt chỉ-của-một-task thì không ghi. Xem Bước 3 mục 3.
+- **Sao vẫn là markdown mà không phải HTML hết cho dễ đọc?** Vì hai loại độc giả khác nhau:
+  bạn đọc `dashboard.html`, còn executor/verifier đọc markdown. Markdown tốn ít hơn HTML
+  khoảng 2,5–3 lần token cho cùng nội dung, và 4 subagent nhận diện task spec qua đúng các
+  heading/enum tiếng Anh trong đó — bọc chúng vào thẻ HTML là làm hỏng khớp nối, đúng chỗ dễ
+  hỏng ngầm nhất. Nên: markdown cho máy, HTML sinh ra cho người, một chiều, không bao giờ lệch.
 - **Sửa skill ở bản copy được không?** Đừng. Sửa ở repo này rồi copy đè (mục 2), không thì
   các nơi lệch nhau — đúng cái vấn đề kiến trúc này sinh ra để tránh.
