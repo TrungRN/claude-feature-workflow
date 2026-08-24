@@ -289,8 +289,31 @@ Quy tắc: **tiếng Việt cho người đọc, tiếng Anh cho máy đọc.**
 
 Lý do không dịch phần cấu trúc: 4 subagent nhận diện task spec **qua đúng những heading tiếng
 Anh đó**, và executor là model rẻ (Haiku) rất dễ lệch format. Dịch heading là làm hỏng khớp nối
-giữa các agent, trong khi dịch văn xuôi thì không mất gì. Ngôn ngữ được chốt ở Phase 0 và ghi vào
-`PLAN.md § Environment`, nên session sau đọc lại vẫn viết đúng thứ tiếng.
+giữa các agent, trong khi dịch văn xuôi thì không mất gì.
+
+**Nó chọn tiếng gì, theo thứ tự nào** (dừng ở cái đầu tiên trả lời được):
+
+1. bạn nói thẳng trong session, hoặc trong một `CLAUDE.md` do bạn viết;
+2. dòng `Language:` trong host contract (mục 6.1) — hợp khi cả team dùng chung một thứ tiếng;
+3. ngôn ngữ **trong lời bạn viết**, *không* phải ngôn ngữ của cái URD/ticket bạn dán vào. Dán
+   ticket tiếng Anh không có nghĩa là bạn muốn được trả lời bằng tiếng Anh;
+4. nếu bạn chỉ dán tài liệu mà không viết câu nào của mình → nó **hỏi** trước khi tạo file.
+
+Chốt xong thì ghi vào `PLAN.md § Environment`, nên session sau resume vẫn đúng thứ tiếng.
+
+> ⚠️ **Trước đây điểm 3 là nguyên nhân bạn thấy lúc Anh lúc Việt**: skill chỉ nhìn "ngôn ngữ của
+> yêu cầu", nên dán một URD tiếng Anh là cả plan lẫn báo cáo chuyển sang tiếng Anh.
+
+**Muốn chắc chắn mọi session mới đều đúng tiếng, kể cả session trắng?** Skill không có trí nhớ
+giữa các session — thứ duy nhất sống sót là file. Nên viết một dòng vào `~/.claude/CLAUDE.md`
+(file Claude Code nạp ở **mọi** session, mọi repo):
+
+```markdown
+Luôn trả lời tôi bằng tiếng Việt.
+```
+
+Đó là điểm 1 trong thứ tự trên, nên nó thắng tất cả. Muốn phạm vi hẹp hơn (chỉ một repo) thì đặt
+dòng đó trong `CLAUDE.md` của repo, hoặc dùng `Language:` trong host contract.
 
 ---
 
@@ -353,7 +376,8 @@ Vài điểm đáng biết:
 │   ├── references/
 │   │   ├── task-spec-standard.md   ← chuẩn viết task spec "tự-đủ" + checklist
 │   │   └── analysis.md             ← cách phân tích ảnh hưởng (có KB / không KB)
-│   ├── assets/                     ← 4 khuôn: task, PLAN, testcases, PROGRESS
+│   ├── assets/                     ← 5 khuôn: task, PLAN, testcases, PROGRESS,
+│   │                                  SKILL-FEEDBACK (góp ý về chính skill — mục 6.4)
 │   └── scripts/
 │       └── render-dashboard.py     ← dựng dashboard.html từ markdown (Python, 0 token)
 ├── agents/                         ← 4 SUBAGENT (thợ + giám khảo)
@@ -361,6 +385,8 @@ Vài điểm đáng biết:
 │   ├── task-executor-pro.md        ← thợ Sonnet (task khó / tạo mới)
 │   ├── task-verifier.md            ← giám khảo Sonnet (không sửa file; lái được web/mobile)
 │   └── task-verifier-pro.md        ← giám khảo Opus (task risk: high)
+├── commands/
+│   └── harvest-feedback.md         ← CHỈ ở repo gốc: áp SKILL-FEEDBACK.md vào skill (mục 6.4)
 ├── hooks/
 │   ├── guard-paths.sh              ← (tuỳ chọn) hàng rào chặn ghi ngoài vùng cho phép
 │   └── render-dashboard.sh         ← (tuỳ chọn) tự dựng lại dashboard sau mỗi lần ghi plan
@@ -408,6 +434,7 @@ Thêm vào `CLAUDE.md` của host mục sau, điền đủ 5 ý:
 - Code paths in specs: ../<repo>/…, tính từ gốc repo này
 - Analysis sources: <đọc gì, theo thứ tự nào; lệnh test lấy ở đâu>
 - Testcase template: <path — bỏ qua nếu dùng khuôn mặc định của skill>
+- Language: <ngôn ngữ dùng để nói chuyện + viết văn xuôi trong file; bỏ qua nếu muốn skill tự đoán>
 - Write guard: <hook nào chặn ghi + thủ tục mở/đóng khóa; hoặc "none">
 - After merge: <các bước hậu-merge; hoặc "none">
 ```
@@ -451,7 +478,46 @@ chặn gì, luôn `exit 0`, không tốn token. Cài giống hook trên: copy fi
 `hooks.PostToolUse` trong `settings.json`. Không cài cũng được, skill vẫn tự dựng ở các mốc
 báo cáo (mục 3d).
 
-### 6.4. Checklist chất lượng của một task spec
+### 6.4. Skill tự cải tiến: ghi nhận khi chạy, áp vào repo gốc sau
+
+Trong lúc chạy, thứ hỏng có thể là **sản phẩm bạn đang xây**, mà cũng có thể là **chính cái
+workflow này** — một khuôn thiếu field, một câu hướng dẫn mơ hồ khiến Haiku lệch format, một luật
+không phủ được tình huống vừa gặp. Hai thứ đó đi hai đường khác nhau:
+
+| Hỏng cái gì | Ghi vào đâu | Ai đọc |
+|---|---|---|
+| code / convention của **dự án** | `SYSTEM-CONTEXT.md § Lessons learned` | mọi executor sau, tự động |
+| **bản thân skill** | `<plans root>/SKILL-FEEDBACK.md` | bạn, sau đó, ở repo gốc |
+
+**Skill không bao giờ tự sửa file của chính nó khi đang chạy.** Ba lý do, và đây là chỗ đáng cân
+nhắc nhất nếu bạn muốn "tự improve" theo nghĩa tự động:
+
+1. Bản đang chạy là **bản copy** — sửa vào đó thì lần copy đè tiếp theo xoá sạch, mà bạn còn
+   không biết là mình vừa mất gì.
+2. Tự sửa luật ngay giữa lúc đang thi hành luật đó, **không có ai review**.
+3. Sửa sai một lần thì hỏng **mọi feature sau**, không phải chỉ feature đang làm. Rủi ro không
+   đối xứng: được ít, mất nhiều.
+
+Nên nó **đề xuất**, không **vá**. File `SKILL-FEEDBACK.md` nằm ở thư mục `plans/`, **ngoài**
+`.claude/skills/`, nên copy đè bản skill mới không đụng tới nó — feedback tích luỹ qua nhiều
+feature và sống sót qua các lần nâng cấp. Mỗi mục ghi: sai ở file/mục nào của skill, triệu chứng
+cụ thể, vì sao sẽ lặp lại, và **đề xuất sửa chính xác ra sao**.
+
+**Áp vào repo gốc** — mở Claude Code trong `claude-feature-workflow` rồi chạy:
+
+```
+/harvest-feedback <đường-dẫn-tới-SKILL-FEEDBACK.md hoặc thư mục cần quét>
+```
+
+Lệnh này gom các mục `Status: open`, gộp trùng, **tự bác** những mục không đáng sửa (lỗi vặt một
+lần, thứ thuộc về dự án chứ không thuộc workflow, thứ chỉ đúng với một host, hoặc mâu thuẫn với
+một quyết định thiết kế có chủ đích), trình bạn duyệt từng nhóm rồi mới sửa, cuối cùng đánh dấu
+`applied <ngày>` để lần sau không áp lại. Nó chỉ có ở repo gốc, không copy sang host.
+
+Sau khi sửa ở gốc, các host chỉ nhận thay đổi khi bạn **copy lại** (mục 2) — đúng như mọi thay
+đổi khác của skill.
+
+### 6.5. Checklist chất lượng của một task spec
 
 Spec đạt khi: executor đọc **mỗi spec đó** là làm đúng được — code liên quan đã trích
 inline, convention ghi rõ (không nói "theo chuẩn dự án"), có "Pattern to mirror" khi tạo
@@ -497,5 +563,14 @@ file mới, Definition of Done kiểm được bằng mắt/lệnh, self-check l
   khoảng 2,5–3 lần token cho cùng nội dung, và 4 subagent nhận diện task spec qua đúng các
   heading/enum tiếng Anh trong đó — bọc chúng vào thẻ HTML là làm hỏng khớp nối, đúng chỗ dễ
   hỏng ngầm nhất. Nên: markdown cho máy, HTML sinh ra cho người, một chiều, không bao giờ lệch.
+- **Skill có tự sửa chính nó được không?** Có ghi nhận, không tự vá. Gặp lỗi của workflow (khuôn
+  thiếu field, hướng dẫn mơ hồ làm executor lệch) nó ghi một mục vào `plans/SKILL-FEEDBACK.md`
+  kèm đề xuất sửa cụ thể; bạn chạy `/harvest-feedback` ở repo gốc để duyệt và áp. Tự sửa bản copy
+  đang chạy thì vừa bị copy đè xoá mất, vừa không ai review, vừa hỏng luôn mọi feature sau — xem
+  mục 6.4.
+- **Sao lúc nó trả lời tiếng Việt, lúc tiếng Anh?** Trước đây nó đoán theo "ngôn ngữ của yêu
+  cầu", nên bạn dán một ticket tiếng Anh là nó chuyển hết sang tiếng Anh. Nay có thứ tự ưu tiên
+  rõ ràng và nó phân biệt *lời bạn viết* với *tài liệu bạn dán*. Muốn chắc chắn ở mọi session
+  mới: thêm một dòng "Luôn trả lời tôi bằng tiếng Việt." vào `~/.claude/CLAUDE.md` — xem mục 3c.
 - **Sửa skill ở bản copy được không?** Đừng. Sửa ở repo này rồi copy đè (mục 2), không thì
   các nơi lệch nhau — đúng cái vấn đề kiến trúc này sinh ra để tránh.

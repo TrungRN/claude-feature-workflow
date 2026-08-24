@@ -53,15 +53,23 @@ without re-deriving them):
 5. **analysis sources** — what to read to find impact and conventions.
 6. **UI surface** — `web`, `mobile`, or `none`; settled in Phase 2. It decides which tasks get a
    UI check and which MCP server the verifier needs.
-7. **language** — the language artifact prose is written in (see the language ground rule).
-   Default to the language the user wrote their request in.
+7. **language** — the language of everything a *person* reads: the conversation, every
+   `AskUserQuestion`, end-of-unit reports, and artifact prose. Resolve in this order and stop at
+   the first that answers:
+   a. an explicit instruction from the user (this session, or a CLAUDE.md they control);
+   b. `Language:` in the host contract;
+   c. the language of **the user's own words** in the request — *not* the language of a pasted
+      URD / ticket / spec. A Vietnamese user pasting an English ticket is still a Vietnamese
+      user; the paste says nothing about how they want to be talked to;
+   d. nothing but pasted material and no prose of their own → **ask**, with `AskUserQuestion`,
+      before writing any artifact. One question is cheaper than a whole plan in the wrong language.
 
-Facts 1–5 are resolvable now; 6 comes out of Phase 2 and 7 from the user's own request.
+Facts 1–5 are resolvable now; 6 comes out of Phase 2, 7 from the rule above.
 
 Resolve them in this order:
 
 - **Host contract (highest priority).** A **"Feature-workflow host contract"** section states
-  all five facts; hosts publish it in their `CLAUDE.md`. This is how a knowledge base (or any
+  facts 1–5 and may also pin `Language:`; hosts publish it in their `CLAUDE.md`. This is how a knowledge base (or any
   custom host) plugs this skill in without modifying it. The contract may already be in your
   context (the host's CLAUDE.md auto-loaded, or a wrapper command that read it for you). If
   not, **probe for it** before assuming there is none:
@@ -91,8 +99,10 @@ Resolve them in this order:
   tokens and only the user knows which screens are worth it. When it *is* on and the verifier
   can't run it, the honest answer is `NEEDS-HUMAN` — never `PASS` on the command checks alone.
   Never turn `ui_verify` on by yourself.
-- **Language: user's language for people, English for machinery.** Write in the user's language:
-  conversation, `AskUserQuestion` options, end-of-unit reports, and the *prose* inside artifacts
+- **Language: user's language for people, English for machinery.** The value recorded in
+  PLAN.md § Environment governs — it is what a later session reads back, since nothing else
+  about this conversation survives. Write in that language: conversation, `AskUserQuestion`
+  options, end-of-unit reports, and the *prose* inside artifacts
   (Summary, Objective, the text of Definition-of-Done items, scenario descriptions, the HANDOFF
   narrative). Always keep in English: template headings (`## Definition of Done`, `## Self-check`,
   `### UI check`, …), frontmatter field names, every enum value (`todo`/`in-progress`/`done`/
@@ -300,7 +310,8 @@ Only after explicit user approval:
    open rows — only the user can confirm those, so hand them the list and say so plainly.
 7. **Close the loop.** Run the host's after-merge steps from the contract (e.g. refresh the
    KB, rebuild relationship docs, record an ADR). No contract → just remind the user to
-   commit/review.
+   commit/review. If `SKILL-FEEDBACK.md` gained entries during this run, say so and point at it
+   (see **Improving this skill**) — that is the only moment anyone is likely to act on them.
 
 ## Status discipline
 
@@ -322,6 +333,37 @@ session dies between the two, the files must not be lying about what happened.
 dispatch and each verdict, and rewrite its HANDOFF block at the same time so it always describes
 the present moment. That block is what a fresh session — or a different AI, or a human with no
 access to this workflow — uses to carry on, so keep it self-contained and absolute-path'd.
+
+## Improving this skill — record, never self-edit
+
+Two different kinds of lesson come out of a run, and they must not be mixed:
+
+| What went wrong | Where it goes | Who reads it |
+|---|---|---|
+| the **product's** code/conventions surprised an executor | `SYSTEM-CONTEXT.md` § Lessons learned | every later executor, automatically |
+| **this workflow** is what failed — a template lacks a field, an instruction is ambiguous enough that a cheap model drifted, a rule doesn't cover a case you hit | `<plans root>/SKILL-FEEDBACK.md` | a human, later, in the skill's source repo |
+
+**Never edit the installed skill during a run** — not `SKILL.md`, not `references/`, not
+`assets/`. Three reasons: this copy is downstream of a source repo and re-copying would silently
+wipe the edit; a self-edit changes the rules mid-run with nothing reviewing it; and a wrong
+self-edit corrupts every future feature, not just this one. Propose, don't patch.
+
+Write an entry when you notice something that will **recur**:
+
+- an executor came back `blocked` because the spec standard has no place for what it needed;
+- you had to hand-fix the same kind of drift twice (a heading a cheap model kept mangling);
+- a template field was ambiguous, missing, or wrong for this host;
+- a rule here gave no answer for a situation that will happen again (a verdict case, a guard
+  interaction, a host shape);
+- an instruction told you to do something that turned out to be impossible or harmful here.
+
+Do **not** write an entry for a one-off model slip, or for anything specific to this product —
+that is what the Lessons learned section is for.
+
+Create the file from `assets/SKILL-FEEDBACK-template.md` on the first entry; append after that.
+Each entry names the exact skill file and section, the symptom, why it recurs, and the concrete
+proposed edit. Mention the count in the end-of-unit report ("2 mục skill feedback"), so the user
+knows there is something to harvest — an entry nobody harvests is worth nothing.
 
 ## Dashboard — the plan as one HTML page
 
@@ -383,6 +425,8 @@ that isn't quoted in it?* Fix any task where the answer is no.
   journal + the HANDOFF block that makes a run resumable.
 - `scripts/render-dashboard.py` — builds `plans/<slug>/dashboard.html` from the markdown. Run
   it, never read it.
+- `assets/SKILL-FEEDBACK-template.md` — copy to `<plans root>/SKILL-FEEDBACK.md` the first time
+  this workflow itself proves defective. See **Improving this skill**.
 
 Dispatched by this skill (in `.claude/agents/`): `task-executor` (Haiku), `task-executor-pro`
 (Sonnet), `task-verifier` (Sonnet), `task-verifier-pro` (Opus, `risk: high`).
