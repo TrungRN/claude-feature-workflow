@@ -14,7 +14,8 @@ _Drafted: <YYYY-MM-DD> · Status: draft | awaiting-approval | executing | done |
 - Write guard: none | <unlock/lock procedure per the host contract>
 - After merge (host steps): <e.g. refresh KB, rebuild relationships, record ADR | none>
 - UI surface: web | mobile | none   <!-- what a task could be verified against, if asked -->
-- Language: <language of prose in these artifacts; structure stays English>
+- Language: <language for everything a person reads — conversation, questions, reports,
+  and the prose in these files. Template headings, enum values and commands stay English.>
 
 ## Affected repos / modules
 | Repo or module | Role in this feature | Kind of change |

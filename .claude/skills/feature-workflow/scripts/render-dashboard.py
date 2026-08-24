@@ -851,7 +851,8 @@ def pick_lang(plan):
 
 
 def emit(plan, plan_dir, out_path):
-    T = STR[pick_lang(plan)]
+    lang = pick_lang(plan)
+    T = STR[lang]
     tasks = plan["tasks"]
     counts = dict((s, 0) for s in STATUS_ORDER)
     for t in tasks:
@@ -924,7 +925,10 @@ def emit(plan, plan_dir, out_path):
                                            esc(T["donelabel"])))
     reruns = sum(max(0, st["attempts"] - 1) for st in stats.values())
     if reruns:
-        p.append('<span class="pill blocked">%d %s</span>' % (reruns, esc(T["retries"])))
+        label = T["retries"]
+        if lang == "en" and reruns == 1:
+            label = label.rstrip("s")          # "1 re-run", not "1 re-runs"
+        p.append('<span class="pill blocked">%d %s</span>' % (reruns, esc(label)))
     p.append('<span>%s %s</span>' % (esc(T["generated"]),
                                      time.strftime("%Y-%m-%d %H:%M")))
     p.append("</div>")
