@@ -167,10 +167,14 @@ kiểm tra. Cập nhật về sau = lặp lại đúng các lệnh trên (copy �
 **Bước 1 — Lập kế hoạch.** Mở Claude Code, gọi skill theo một trong hai cách — cách nào
 cũng chạy ở **mọi nơi** đã cài skill (repo đơn lẻ hay KB đều như nhau):
 
-> Gõ lệnh: `/feature-workflow "thêm đăng nhập bằng Google"`
+> Gõ lệnh: `/feature-workflow:run "thêm đăng nhập bằng Google"`
 >
 > Hoặc nói tự nhiên: *"Plan this feature: thêm đăng nhập bằng Google"* (dán URD/ticket kèm ý
 > định làm là skill tự kích hoạt, không cần lệnh)
+
+Skill của plugin **luôn** bị Claude Code đặt namespace `<tên-plugin>:<tên-skill>` — không bỏ
+được phần trước dấu `:`. Nên vế sau được đặt là `run` cho dễ đọc và dễ gõ:
+`/feature-workflow:run`. Gõ `/feature-` rồi Tab là ra.
 
 Riêng trong `agent-knowledge-base` có thêm alias `/kb-feature "<mô tả>"` — tác dụng y hệt,
 chỉ là tên quen tay theo bộ lệnh `/kb-*` của KB đó.
@@ -178,15 +182,17 @@ chỉ là tên quen tay theo bộ lệnh `/kb-*` của KB đó.
 Skill sẽ hỏi nếu có gì mơ hồ, rồi tạo:
 
 ```
-plans/google-login/
-├── PLAN.md              ← tổng quan: bảng task, thứ tự, trạng thái
-├── SYSTEM-CONTEXT.md    ← convention + lệnh build/test cho executor
-├── testcases.md         ← testcase — CHỐT TRƯỚC KHI CODE
-├── PROGRESS.md          ← (sinh ra khi bắt đầu chạy) nhật ký + khối bàn giao
-├── dashboard.html       ← BẠN ĐỌC CÁI NÀY — 1 trang gộp tất cả (sinh tự động, xem 3d)
-└── tasks/
-    ├── task-001-….md    ← mỗi task một spec tự-đủ
-    └── task-002-….md
+plans/
+├── LESSONS.md           ← bộ nhớ xuyên feature (sinh ra khi đóng feature đầu tiên, xem 6.4)
+└── google-login/
+    ├── PLAN.md              ← tổng quan: bảng task, nhóm + cổng tích hợp, trạng thái
+    ├── SYSTEM-CONTEXT.md    ← convention + lệnh build/test cho executor
+    ├── testcases.md         ← testcase — CHỐT TRƯỚC KHI CODE
+    ├── PROGRESS.md          ← (sinh ra khi bắt đầu chạy) nhật ký + khối bàn giao
+    ├── dashboard.html       ← BẠN ĐỌC CÁI NÀY — 1 trang gộp tất cả (sinh tự động, xem 3d)
+    └── tasks/
+        ├── task-001-….md    ← mỗi task một spec tự-đủ
+        └── task-002-….md
 ```
 
 **Bước 2 — Duyệt.** Đọc `PLAN.md` và `testcases.md`. Cần chỉnh gì thì nói luôn. Chưa đồng ý
@@ -204,13 +210,34 @@ testcase thì workflow **không** code.
 | `by-group` *(mặc định gợi ý)* | trọn 1 nhóm chạy song song | cân bằng — vừa nhanh vừa review được |
 | `all` | chạy hết | task nhỏ, tin tưởng, review một lần ở cuối |
 
+**"Nhóm" ở đây là một lát cắt push được, không phải một tầng kiến trúc.** Đây là điểm dễ sai
+nhất khi chia task: nếu cắt ngang theo tầng (nhóm 1 = toàn bộ model, nhóm 2 = toàn bộ service,
+nhóm 3 = UI) thì xong nhóm 1 bạn có một đống code **không ai gọi** — review không ra gì, mà repo
+nào có lint dead-code / `knip` / `ts-prune` / rule unused-export là chặn thẳng, không push được.
+Nên skill cắt **dọc**: mỗi nhóm là một lát mỏng xuyên qua mọi tầng nó cần, kết thúc ở một chỗ
+**chạm tới được** (route, màn hình, command, job, hoặc API đã có người gọi trong repo).
+
+Ba luật kèm theo, để lát cắt thật sự đóng lại được:
+
+- Task nào tạo ra thứ mới thì phải khai `## Wiring` trong spec: **ai gọi nó**, ở file nào. Nếu
+  chỗ gọi do task khác viết, task đó phải **cùng nhóm** — không được đẩy sang nhóm sau.
+- Mỗi nhóm có **cổng tích hợp** ghi sẵn trong `PLAN.md § Groups`: sau nhóm này *cái gì chạy
+  được*, cộng lệnh dead-code/build/test của chính repo bạn.
+- Trước khi báo cáo hết nhóm, orchestrator **chạy cổng đó thật** rồi mới tick. Cổng fail thì đó
+  là lỗi **chia task**, không phải lỗi task — nó phải nói ra và đề xuất task nối dây còn thiếu
+  ngay trong nhóm này, thay vì đi tiếp.
+
 Sau **mỗi** đơn vị, session chính dừng lại và báo cáo: task nào xong, verifier phán thế nào,
 file nào đổi, kèm lệnh `git diff` để bạn tự xem. Bạn trả lời `tiếp` / `đổi sang all` /
 `làm lại task-003` / `dừng`. Riêng mode `all` không hỏi giữa chừng, **nhưng vẫn dừng** khi
 một task fail lần 2, bị blocked, hoặc bị hook chặn ghi.
 
 Trạng thái được ghi ngay lúc nó đổi — `Status:` đầu `PLAN.md`, cột `status` trong bảng task,
-và `status:` trong frontmatter mỗi spec — nên mở file ra là biết đang tới đâu.
+và `status:` trong frontmatter mỗi spec — nên mở file ra là biết đang tới đâu. Cụ thể: task được
+đánh `in-progress` **trước** khi executor được gọi (dashboard dựng lại ngay lúc đó, nên suốt vài
+phút subagent chạy bạn vẫn thấy nó đang chạy chứ không phải nhảy thẳng `todo → done`); khi
+verifier trả `PASS` thì task thành `done` **và** các ô `Definition of Done` trong spec được tick
+— dashboard đếm đúng mấy ô đó thành badge `DoD 4/4`.
 
 **Task fail thì sao?** Verifier trả `FAIL` kèm lý do cụ thể; orchestrator gắn lý do đó vào lần
 dispatch lại của **chính task đó**. Fail lần 2 thì dừng hẳn để bạn xem. Nhưng quan trọng hơn:
@@ -344,17 +371,26 @@ Trong đó có:
 |---|---|
 | Đầu trang | tên feature, `Status`, thanh tiến độ (bao nhiêu task xong / đang chạy / blocked) |
 | Cảnh báo đỏ | `Manual verification queue` — những gì máy chưa xác nhận, nổi lên trên cùng |
-| Task | mỗi task một thẻ gấp/mở, kèm badge `status` · `model` · `risk` · `ui_verify`, phụ thuộc và "mở khoá" task nào, ô lọc để tìm nhanh |
-| Nhóm song song | các task chạy song song được xếp thành cột |
+| Task | mỗi task một thẻ gấp/mở, kèm badge `status` · `DoD 3/4` · `model` · `risk` · `ui_verify`, phụ thuộc và "mở khoá" task nào, ô lọc để tìm nhanh |
+| Nhóm | các nhóm (mỗi nhóm là 1 lát cắt push được) xếp thành cột |
 | Testcase | bảng testcase; mọi chỗ nhắc `TC-3` trong task đều **bấm được** để nhảy đúng dòng |
 | Tiến độ | khối `HANDOFF` ghim sẵn kèm nút **Copy HANDOFF** (để dán sang AI khác), và nhật ký chạy |
 | Cần chú ý | thẻ đỏ liệt kê task từng `FAIL` hoặc đang tắc: chạy mấy lượt, fail mấy lần, **lỗi lần cuối là gì** |
 | Bài học | mục `Lessons learned` được kéo lên đầu trang — thứ mọi executor sau đều đọc |
 
-Riêng chuyện fail/chạy lại, mỗi thẻ task còn có: badge `FAIL ×2` · `⟲ 3 lượt chạy` ngay trên đầu
+Riêng chuyện fail/chạy lại, mỗi thẻ task còn có: badge `FAIL ×2` · `⟲ chạy lại ×2` ngay trên đầu
 thẻ (nên nhìn danh sách là biết task nào trầy trật), và bên trong là **Diễn biến của task này** —
 timeline dispatch → FAIL → dispatch (retry 1) → PASS kèm agent nào chạy và ghi chú lỗi. Tất cả
 đọc ngược từ nhật ký `PROGRESS.md`, không cần agent ghi thêm gì.
+
+Hai con số "chạy lại" **cùng một đơn vị**: badge trên mỗi thẻ là số lần chạy lại *của task đó*
+(chạy lần đầu = 0), còn con số ở đầu trang là **tổng của tất cả các thẻ**. Cộng badge của mọi
+task lại đúng bằng số ở đầu trang.
+
+**Thứ tự trong thẻ task theo cái bạn cần đọc**: Objective → Definition of Done → Wiring →
+Self-check hiện sẵn; còn Context (code dán vào), Pattern to mirror, Constraints, Report format —
+những phần viết cho executor chứ không phải cho người — gộp vào một khối **"Chi tiết kỹ thuật"**
+mặc định thu gọn, bấm mới mở.
 
 Vài điểm đáng biết:
 
@@ -367,6 +403,9 @@ Vài điểm đáng biết:
   cuộn ngang — nên không có cột nào bị cắt mất bên phải, đọc trên điện thoại vẫn đủ.
 - **Tự cập nhật** nếu bạn cài hook `render-dashboard.sh` (mục 6.3). Không cài hook thì skill
   vẫn tự dựng lại ở 2 thời điểm: khi lập xong plan, và sau mỗi lần dừng để báo cáo.
+- **File thì realtime, trình duyệt thì không.** Mỗi lần plan đổi, hook dựng lại HTML ngay —
+  file trên đĩa luôn đúng hiện trạng. Nhưng trình duyệt không tự biết là file vừa đổi, nên muốn
+  thấy cái mới thì **F5**. Cố tình để vậy: trang không tự nhảy dưới tay bạn khi đang đọc.
 - Dựng tay lúc nào cũng được:
 
   ```bash
@@ -465,7 +504,7 @@ Ví dụ thật, đang chạy: mục cùng tên trong `CLAUDE.md` của `agent-k
 Muốn có lệnh gọi tên riêng theo bộ lệnh của host (kiểu `/kb-feature` của agent-kb)? Tạo một
 file command mỏng ở `<host>/.claude/commands/<tên-alias>.md` với nội dung: đọc mục host
 contract trong `CLAUDE.md` của host rồi invoke skill `feature-workflow` với `$ARGUMENTS`.
-Đây chỉ là tiện ích tuỳ chọn — không có alias thì `/feature-workflow` và mô tả tự nhiên vẫn
+Đây chỉ là tiện ích tuỳ chọn — không có alias thì `/feature-workflow:run` và mô tả tự nhiên vẫn
 luôn hoạt động.
 
 ### 6.2. Chiến lược model — vì sao không "Opus review tất cả cho chắc"?
@@ -517,12 +556,16 @@ tự có — copy `hooks/*.sh` vào `<đích>/.claude/hooks/` rồi gộp khối
 
 Trong lúc chạy, thứ hỏng có thể là **sản phẩm bạn đang xây**, mà cũng có thể là **chính cái
 workflow này** — một khuôn thiếu field, một câu hướng dẫn mơ hồ khiến Haiku lệch format, một luật
-không phủ được tình huống vừa gặp. Hai thứ đó đi hai đường khác nhau:
+không phủ được tình huống vừa gặp. Ba thứ đó đi ba đường khác nhau:
 
 | Hỏng cái gì | Ghi vào đâu | Ai đọc |
 |---|---|---|
-| code / convention của **dự án** | `SYSTEM-CONTEXT.md § Lessons learned` | mọi executor sau, tự động |
+| code / convention của **dự án**, cỡ **feature này** | `SYSTEM-CONTEXT.md § Lessons learned` | mọi executor sau của feature này, tự động |
+| cũng là dự án, nhưng là **sự thật lâu dài** — feature sau cũng vấp | `<plans root>/LESSONS.md` (đẩy lên khi đóng feature) | Phase 3 của **mọi feature sau**, chép lại phần liên quan vào SYSTEM-CONTEXT.md |
 | **bản thân skill** | `<plans root>/SKILL-FEEDBACK.md` | bạn, sau đó, ở repo gốc |
+
+Nói cách khác: cơ chế tự học **không** nằm trong skill, nó nằm trong `plans/` của repo đích.
+`LESSONS.md` là bộ nhớ xuyên feature; skill vẫn giữ nguyên như lúc cài.
 
 **Skill không bao giờ tự sửa file của chính nó khi đang chạy.** Ba lý do, và đây là chỗ đáng cân
 nhắc nhất nếu bạn muốn "tự improve" theo nghĩa tự động:
@@ -581,10 +624,11 @@ cài từ marketplace local đó — nó đọc thẳng thư mục nên sửa fi
 
 ## 7. Hỏi nhanh
 
-- **Phải gõ đúng lệnh gì để kích hoạt?** Lệnh universal (mọi nơi đã cài skill) là
-  `/feature-workflow "<mô tả>"`. Không gõ lệnh cũng được — mô tả tính năng kèm ý định làm là
-  skill tự vào việc. `/kb-feature` chỉ là alias có sẵn trong `agent-knowledge-base`; host
-  khác không có (trừ khi bạn tự tạo, xem mục 6.1).
+- **Phải gõ đúng lệnh gì để kích hoạt?** `/feature-workflow:run "<mô tả>"` — mọi nơi đã cài
+  plugin. Phần `feature-workflow:` là namespace Claude Code tự gắn cho skill của plugin, không
+  bỏ được; phần `run` là do repo này đặt (field `name:` trong SKILL.md). Không gõ lệnh cũng
+  được — mô tả tính năng kèm ý định làm là skill tự vào việc. `/kb-feature` chỉ là alias có sẵn
+  trong `agent-knowledge-base`; host khác không có (xem mục 6.1).
 - **Đang chạy giữa chừng thì tắt máy / hết token?** Không sao. Trạng thái từng task nằm trong
   PLAN.md, còn `PROGRESS.md` ghi nhật ký + khối HANDOFF (đang ở đâu, làm gì tiếp, đọc file
   nào). Mở lại và bảo "tiếp tục plans/<slug>".
@@ -609,11 +653,41 @@ cài từ marketplace local đó — nó đọc thẳng thư mục nên sửa fi
   Kiểm tra bằng `claude plugin list` (phải `enabled`) và `claude plugin details feature-workflow`
   (phải đủ 1 skill + 4 agents + 2 hooks).
 - **Task fail rồi sửa lại thì có xem được không?** Được, không phải lục nhật ký: thẻ task hiện
-  `FAIL ×n` và số lượt chạy, mở ra có timeline từng bước kèm lý do fail; đầu trang có thẻ đỏ
+  `FAIL ×n` và số lần chạy lại, mở ra có timeline từng bước kèm lý do fail; đầu trang có thẻ đỏ
   "Cần chú ý" gom hết task trầy trật lại một chỗ. Xem mục 3d.
+- **Số "lượt chạy lại" ở đầu trang và ở thẻ task có cộng dồn nhau không?** Không — con số đầu
+  trang là **tổng của tất cả thẻ**. Task chạy một phát ăn ngay thì không có badge; badge
+  `⟲ chạy lại ×2` nghĩa là riêng task đó chạy lại 2 lần. Cộng badge của mọi task = số ở đầu trang.
 - **Một task fail vì lý do gì đó, các task sau có tránh được không?** Có, nếu lý do đó tổng quát
   hoá được — nó được ghi vào `SYSTEM-CONTEXT.md § Lessons learned`, file mà **mọi** executor đều
   đọc, nên task sau biết trước. Lỗi lặt vặt chỉ-của-một-task thì không ghi. Xem Bước 3 mục 3.
+- **Bài học đó có còn dùng được ở feature sau không?** Có, nhưng qua một bước có chủ đích: lúc
+  đóng feature, những bài học là **sự thật lâu dài về codebase** (convention, bẫy build, cạm bẫy
+  ở module dùng chung) được đẩy lên `plans/LESSONS.md`; Phase 3 của feature sau đọc file đó và
+  **chép** phần liên quan tới repo nó động vào `SYSTEM-CONTEXT.md` mới. Chép chứ không link, vì
+  executor chỉ đọc đúng `SYSTEM-CONTEXT.md`. Bản thân skill thì **không** đổi — bộ nhớ nằm trong
+  `plans/` của repo bạn, nên `/plugin update` không xoá mất, và cũng không có luật nào bị sửa
+  lén giữa lúc đang chạy. Xem mục 6.4.
+- **Verifier là agent chạy test, hay chỉ soi sau khi ai đó đã test?** Nó **tự chạy lại**. Không có
+  agent nào chuyên "chạy test": executor tự chạy self-check của mình trong lúc làm, rồi verifier
+  — một model **mạnh hơn**, context **riêng**, không thấy cuộc hội thoại của executor, chỉ được
+  quyền đọc + chạy lệnh, **không được sửa file** — chạy lại đúng các lệnh đó từ đầu, đọc diff,
+  đối chiếu từng dòng Definition of Done và từng testcase, kiểm cả việc có sửa file ngoài phạm vi
+  không. Báo cáo "đã pass" của executor không được tính là bằng chứng. Với `ui_verify:
+  browser|mobile` thì chính verifier là con lái browser/simulator. `risk: high` thì đổi sang
+  `task-verifier-pro` (Opus) soi gắt hơn.
+- **Chạy hết trong 1 session, hay mỗi nhóm mở session mới cho đỡ tốn?** Cứ **một session**. Executor
+  và verifier vốn đã chạy ở context riêng nên tách session không tiết kiệm được gì ở phía chúng;
+  đổi lại, session mới phải đọc lại PLAN.md + SYSTEM-CONTEXT.md + PROGRESS.md từ đầu và mất sạch
+  prompt cache đang ăn hit. Thứ thật sự phình lên là context của **session điều phối**, do gom báo
+  cáo của từng executor/verifier. Nên: chạy tiếp trong một session, chỉ mở session mới khi context
+  đã nặng thật (cỡ quá 2/3 cửa sổ, hoặc đã qua vài nhóm) — lúc đó khối **HANDOFF** chính là bản
+  bàn giao, dán đường dẫn plan vào session mới là chạy tiếp được.
+- **Dashboard có tốn token không, có realtime không?** Không tốn: nó do script Python dựng, model
+  không viết một chữ nào trong đó và **không agent nào đọc lại** file HTML — chi phí đúng bằng
+  một lệnh Bash. **File** thì realtime: hook `render-dashboard.sh` dựng lại ngay mỗi lần có ghi
+  vào `plans/**.md`, kể cả subagent ghi. **Trình duyệt** thì không — F5 mới thấy bản mới.
+  Xem mục 3d.
 - **Sao vẫn là markdown mà không phải HTML hết cho dễ đọc?** Vì hai loại độc giả khác nhau:
   bạn đọc `dashboard.html`, còn executor/verifier đọc markdown. Markdown tốn ít hơn HTML
   khoảng 2,5–3 lần token cho cùng nội dung, và 4 subagent nhận diện task spec qua đúng các

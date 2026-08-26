@@ -54,6 +54,7 @@ it'll know it's done* before any detail.
 | `id` | yes | Stable id, e.g. `task-003`. Referenced by `depends_on` and status. |
 | `title` | yes | One line, imperative. |
 | `repo` | kb-workspace | The single workspace repo this task edits (directory name). One repo per task — split tasks that would span two. Omit (or `.`) in single-repo mode. |
+| `group` | yes | The shippable slice this task belongs to (`1`, `2`, …). Must match PLAN.md § Groups. A group ends in a state the user can push — see **No orphan code** below. |
 | `depends_on` | yes | Task ids that must be `done` first. `[]` if none. Drives ordering + parallelism. |
 | `files` | yes | Files this task may create/modify, in the declared path convention. Keep tight. |
 | `model` | yes | Execution tier: `haiku` (mechanical/bounded) or `sonnet` (logic, ambiguity, new components). |
@@ -68,23 +69,55 @@ it'll know it's done* before any detail.
 2. **Definition of Done** — a checklist of concrete, observable outcomes, near the top. Each item
    must be checkable ("submitting an invalid email shows 'Invalid email' below the input"), not
    aspirational ("validation works"). Reference the testcases from `testcases.md` this task
-   makes pass, by id, when applicable.
-3. **Context** — paste the actual current code the task touches, inline, with paths, plus
+   makes pass, by id, when applicable. Boxes start unticked; the **orchestrator** ticks them
+   when the verifier returns PASS.
+3. **Wiring** *(required whenever the task creates or exports something new)* — what this task
+   adds, the exact call site that uses it, and the entry point it becomes reachable from. See
+   **No orphan code** below.
+4. **Context** — paste the actual current code the task touches, inline, with paths, plus
    enough surrounding code to make the change without opening other files.
-4. **Conventions this task must follow** — state the specific rules (styling, error component,
+5. **Conventions this task must follow** — state the specific rules (styling, error component,
    naming, patterns) explicitly, or quote the exact section of `SYSTEM-CONTEXT.md`. This is the
    only convention source the executor is guaranteed to have.
-5. **Pattern to mirror** *(required when creating new files/components)* — quote an analogous
+6. **Pattern to mirror** *(required when creating new files/components)* — quote an analogous
    existing file inline and state the required structure: props/params, exports, file location,
    naming. New code is where a cheap model most often invents its own style.
-6. **Constraints / Do NOT touch** — what must stay unchanged, what not to add (e.g. no new
+7. **Constraints / Do NOT touch** — what must stay unchanged, what not to add (e.g. no new
    dependencies), which files are off-limits.
-7. **Expected output** — a sample diff, the shape of the result, or an example of the behavior.
-8. **Self-check** — the exact commands to run, **verbatim** (typecheck, lint, the specific
+8. **Expected output** — a sample diff, the shape of the result, or an example of the behavior.
+9. **Self-check** — the exact commands to run, **verbatim** (typecheck, lint, the specific
    tests), with expected results. State the working directory. Whenever a Definition-of-Done item
    is user-visible, add a `### UI check` subsection (below) — regardless of what `ui_verify` says.
-9. **Report format** — how to report back: what changed, the Definition-of-Done checklist ticked
-   or not, and — if blocked — exactly where and what's missing.
+10. **Report format** — how to report back: what changed, the Definition-of-Done checklist ticked
+    or not, and — if blocked — exactly where and what's missing.
+
+The dashboard shows sections 1–3 and 9 open, and folds the rest into a collapsed block: those
+are the parts a person reads, the rest is raw material for the executor.
+
+## No orphan code — the rule that makes a group pushable
+
+Splitting a feature by layer (all the models, then all the services, then all the UI) produces
+groups that are individually useless: after group 1 the repo is full of code nothing calls. That
+is not reviewable, and on many repos it is not even pushable — lint, `knip`, `ts-prune`,
+`vulture`, dead-code CI or an unused-export rule will reject it, and a reviewer has nothing to
+look at.
+
+So decompose **vertically**: a group is a thin slice through every layer it needs, ending in
+something reachable.
+
+- **Every task that creates something new declares its caller** in `## Wiring`. If the caller
+  doesn't exist yet, the task that writes the caller is in the **same group** — never the next one.
+- **A pure-producer task is only allowed when its consumer ships in the same group.** Two tasks
+  in one group may reference each other's output; two tasks in different groups may not.
+- **Each group ends at an entry point**: a route, a screen, a command, a job, or an exported API
+  that something in-repo already consumes — plus at least one test that reaches the new code
+  through that entry point.
+- When in doubt, ask: *if I stopped right after this group and opened a PR, would a reviewer see
+  a working (if small) capability, or a pile of unused files?* Only the first is a valid group.
+
+An exception worth naming: a genuinely standalone artifact (a migration, a config file, a
+generated client) has no caller by nature. Say so explicitly in `## Wiring` — "no call site: this
+is a migration run by `npm run migrate`" — so the omission is a decision, not an oversight.
 
 ## The `### UI check` block
 
@@ -138,6 +171,8 @@ Before marking a spec done, confirm every line. If any fails, fix the spec.
 - [ ] Every file the executor must understand is **quoted inline** — no un-pasted "see file X".
 - [ ] Exact paths (in the declared convention) for everything to create or edit.
 - [ ] Exactly **one concern** (no "and") — and exactly one repo, in kb-workspace mode.
+- [ ] **`## Wiring` names a real call site** (or states explicitly why the artifact has none),
+      and that call site is written by this task or by another task in the **same** `group`.
 - [ ] No step requires reasoning across files that aren't in the spec.
 - [ ] **Conventions the task relies on are stated inline** (the executor has no CLAUDE.md).
 - [ ] **New files include a "Pattern to mirror"** with an inline example and required structure.

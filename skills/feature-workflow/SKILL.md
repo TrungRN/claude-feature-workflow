@@ -1,5 +1,5 @@
 ---
-name: feature-workflow
+name: run
 description: >-
   Plan AND execute a feature, in any host: a single repo, or a multi-repo workspace described
   by a knowledge base. Turns a feature request / URD / spec / ticket into a plan, testcases
@@ -173,16 +173,41 @@ Write `plans/<slug>/SYSTEM-CONTEXT.md` per `references/analysis.md`: relevant mo
 types (quoted inline), the **conventions** the feature must follow (from CLAUDE.md files,
 rules docs, observed code — per repo in kb-workspace mode), the **verbatim build/test/lint
 commands**, integration points/contracts, and constraints. This file is the executors' only
-source of house style — make it earn that. End it with an empty `## Lessons learned` section:
+source of house style — make it earn that. End it with a `## Lessons learned` section:
 Phase 5 appends to it whenever a failure exposes a rule the plan failed to state.
+
+**Seed that section from past features.** If `<plans root>/LESSONS.md` exists, read it and copy
+the entries that apply to the repos this feature touches into `## Lessons learned` — that file is
+where earlier runs deposited the conventions their executors had to learn the hard way. Copying,
+not linking: executors only ever read SYSTEM-CONTEXT.md, so a lesson that stays in LESSONS.md is
+a lesson nobody applies. Skip entries about repos this feature doesn't touch; a bloated context
+file is its own failure mode.
 
 ## Phase 4 — Decompose, tier, write testcases and the plan
 
-- Break the work into the smallest independently-implementable, independently-verifiable
+- **Slice vertically, not by layer.** First cut the feature into **groups**, where each group is
+  a *shippable slice*: after it finishes, the new code is reachable from a real entry point
+  (route, screen, command, job, or an exported API something in-repo already consumes), the repo
+  builds, and the user could open a PR that a reviewer would recognize as a working capability.
+  Only inside a group do you split by layer/concern. Cutting the other way round — "all the
+  models", then "all the services", then "all the UI" — produces groups of code nothing calls:
+  unreviewable, and rejected outright by repos with dead-code lint or unused-export rules.
+  **A producer and its first consumer belong in the same group**, never in consecutive ones.
+  `references/task-spec-standard.md` § **No orphan code** is the rule; follow it.
+- Then break each group into the smallest independently-implementable, independently-verifiable
   units: **one concern per task** (and one repo per task in kb-workspace mode),
   dependency-ordered (producer/contract side before consumers), parallel-friendly, small
-  enough for one executor context.
-- Tag each task: **`model`** — `haiku` for mechanical/bounded work, `sonnet` for real logic,
+  enough for one executor context. Tasks in the same group must not share files.
+- **Every task that creates something new fills in `## Wiring`**: what it adds, the exact call
+  site, and the entry point it becomes reachable from. If the call site is written by a sibling
+  task, name that task — and check it is in the same `group`. A standalone artifact (migration,
+  config, generated client) says so explicitly instead.
+- **Give each group an integration gate** in PLAN.md § Groups: what works end-to-end after it,
+  and the verbatim command that would catch orphaned code in this repo (the project's lint,
+  build, `knip`/`ts-prune`/`vulture`, or its own dead-code check). That gate is what you run
+  before reporting the group as finished (Phase 5 step 5).
+- Tag each task: **`group`** — the slice it belongs to, matching PLAN.md. **`model`** — `haiku`
+  for mechanical/bounded work, `sonnet` for real logic,
   ambiguity, or new components/architecture. **`risk`** — `high` for auth, payments,
   migrations, security, data-loss, or a cross-module/cross-repo **contract change**; `low`
   otherwise. `risk` drives verifier tier. **`ui_verify`** — always write **`none`**; only the
@@ -201,8 +226,9 @@ Phase 5 appends to it whenever a failure exposes a rule the plan failed to state
   must include a **"Pattern to mirror"** quoted inline.
 - Write `plans/<slug>/PLAN.md` from `assets/PLAN-template.md`: summary, **Environment**
   (Phase 0 facts), affected repos/modules, impact, ordered task table
-  (`repo`/`model`/`risk`/`ui_verify`/`status`), parallelization groups, global acceptance
-  criteria, the testcase gate, and after-merge steps from the host contract.
+  (`repo`/`group`/`model`/`risk`/`ui_verify`/`status`), the **Groups** section with one
+  integration gate per group, global acceptance criteria, the testcase gate, and after-merge
+  steps from the host contract.
 - Render the dashboard (see **Dashboard** below) and hand the user its path with the plan.
 - **STOP.** Present plan + testcases for approval. Implementation does not start until the
   user agrees to the testcases (tick the gate in PLAN.md).
@@ -230,7 +256,7 @@ Only after explicit user approval:
    | Mode | One unit of work is… |
    |---|---|
    | `task-by-task` | a single task |
-   | `by-group` *(recommend this)* | one parallel group from PLAN.md `## Parallelization` |
+   | `by-group` *(recommend this)* | one slice from PLAN.md `## Groups` — ends pushable |
    | `all` | every remaining task |
 
    Recommend `by-group`: it keeps parallelism while still handing back a reviewable chunk.
@@ -247,6 +273,14 @@ Only after explicit user approval:
    **absolute paths** of the task file and SYSTEM-CONTEXT.md, plus the root that spec paths are
    relative to (from Environment). Tasks within one unit go out in the same turn, so they run in
    parallel.
+
+   **Mark the work started before you start it — in a turn of its own.** Executors take minutes;
+   for all of that time the dashboard is the only thing the user can watch. So *first*, in one
+   turn and with no `Agent` call in it: set every task of this unit to `in-progress` (PLAN.md
+   table **and** spec frontmatter), append its `dispatch` journal line to PROGRESS.md, and
+   re-render the dashboard. *Then*, in the next turn, send the `Agent` calls. Doing it the other
+   way round — dispatch first, write status after — leaves the page showing `todo` for the whole
+   run and jumping straight to `done`, which is exactly the blind spot this ordering removes.
 
    **Before dispatching, check the UI tooling — but only if this unit needs it.** If no task in
    this unit has `ui_verify: browser|mobile`, do nothing here: don't run `claude mcp list`, don't
@@ -277,28 +311,49 @@ Only after explicit user approval:
    `NEEDS-HUMAN`. Re-asking every unit is exactly the nagging this design exists to avoid.
 4. **Verify.** Every completed task goes to **task-verifier**; `risk: high` tasks go to
    **task-verifier-pro** (Opus). Three verdicts:
-   - **PASS** → task `done`.
+   - **PASS** → task `done`, and **tick its Definition-of-Done boxes** in the spec (`- [ ]` →
+     `- [x]`). PASS means every item is met, so leaving them unticked makes the plan lie: the
+     dashboard counts those boxes and the user reads them as the record of what was actually
+     delivered. Never tick a box before the verdict, and never tick one the verifier didn't
+     confirm.
    - **FAIL** → first ask: *could another task hit this same problem?* If yes, append one line
      to `SYSTEM-CONTEXT.md` § **Lessons learned** — stated as a rule a fresh executor can follow,
      not as a story about this task. Then re-dispatch the same-tier executor with the verifier's
      feedback appended; after 2 fails, escalate the executor one tier or surface to the user.
    - **NEEDS-HUMAN** → the code passed every automated check but a user-visible criterion could
-     not be machine-verified. Set the task to `needs-human` and add a row to PLAN.md
+     not be machine-verified. Set the task to `needs-human`, tick the DoD boxes the verifier
+     did confirm and leave the unverified one(s) unticked, and add a row to PLAN.md
      `## Manual verification queue` with the criterion, the reason, and the verifier's manual
      steps. **This does not block dependents** — the code is written and its command checks are
      green, so treat it as satisfied for `depends_on` and keep going. It is not a hard stop.
 
    Record every dispatch and every verdict in PROGRESS.md as it happens, and apply the status
    writes.
-5. **Stop and report.** At the end of each unit — including in `all` mode when a stop condition
-   below fires — stop, re-render the dashboard (see **Dashboard**), and give the user a compact
-   report: which tasks finished, each verdict,
+5. **Check the integration gate, then stop and report.** When the unit completes a **group**,
+   run that group's integration gate from PLAN.md § Groups *before* reporting: the no-orphans
+   command, the build, the test suite. The point of the gate is that the user can push what
+   they just reviewed — if it fails (dead-code lint flags a new export, a slice ends with
+   nothing calling it), that is a **planning** defect, not a task defect: say so plainly, name
+   the missing wiring, and propose the follow-up task that closes it in this group rather than
+   moving on. Tick the gate's boxes only from real command output.
+
+   Then stop, re-render the dashboard (see **Dashboard**), and give the user a compact
+   report: which tasks finished, each verdict, the gate result,
    the files that changed, and the command to review them (`git -C <repo> diff`). List any
    `needs-human` tasks **separately from the `done` ones**, each with what still needs checking
    by hand — burying them in the done pile is how an unverified feature ships. Say what they
    can reply: **continue** · **switch to `all`** · **redo task-00X** · **stop**. Then wait. Do
    not start the next unit unprompted. On **continue**, go back to step 3 with the next unit;
    on a mode change, update PLAN.md `## Execution` first; on **stop**, go to step 6.
+
+   **Stay in one session unless it stops being cheaper.** Executors and verifiers run in their
+   own contexts either way, so a new session per group saves nothing on them — it only re-pays
+   for re-reading PLAN.md, SYSTEM-CONTEXT.md and PROGRESS.md, and throws away the prompt cache
+   this session is already getting hits on. What *does* grow is this orchestrator's own context,
+   from every executor and verifier report. So: keep going in one session by default, and suggest
+   a fresh one only when this context is genuinely heavy (roughly: past two thirds of the window,
+   or several groups of reports deep). At that point the HANDOFF block is the handover — it is
+   written to be read cold, so say so and hand over the path rather than continuing to degrade.
 
    **Hard stops, in every mode including `all`:** a second FAIL on the same task, a task the
    executor reports as blocked, or any tool call denied by a hook. `all` means "don't ask
@@ -310,7 +365,16 @@ Only after explicit user approval:
    open rows — only the user can confirm those, so hand them the list and say so plainly.
 7. **Close the loop.** Run the host's after-merge steps from the contract (e.g. refresh the
    KB, rebuild relationship docs, record an ADR). No contract → just remind the user to
-   commit/review. If `SKILL-FEEDBACK.md` gained entries during this run, say so and point at it
+   commit/review.
+
+   **Promote what will outlive this feature.** Go through `SYSTEM-CONTEXT.md` § Lessons learned
+   and append to `<plans root>/LESSONS.md` (create it if absent) every entry that is a durable
+   fact about the codebase — a convention, a build gotcha, a trap in a shared module — rather
+   than something specific to this feature's tasks. One line each, tagged with the repo it
+   applies to and the date, deduped against what's already there. Phase 3 of the next feature
+   reads that file back, which is the only way a lesson learned here ever helps a later run.
+
+   If `SKILL-FEEDBACK.md` gained entries during this run, say so and point at it
    (see **Improving this skill**) — that is the only moment anyone is likely to act on them.
 
 ## Status discipline
@@ -322,9 +386,10 @@ session dies between the two, the files must not be lying about what happened.
 | When | Write |
 |---|---|
 | User approves plan + testcases | PLAN.md `Status:` → `executing`; tick the **Testcase gate** box; record the mode in `## Execution` |
-| A task is dispatched | that task → `in-progress` in **both** the PLAN.md table **and** its spec frontmatter |
-| Verifier returns PASS | that task → `done` in both places |
-| Verifier returns NEEDS-HUMAN | that task → `needs-human` in both places; add a row to PLAN.md `## Manual verification queue` (criterion · why unverified · manual steps). Dependents may still run |
+| A task is **about to be** dispatched | that task → `in-progress` in **both** the PLAN.md table **and** its spec frontmatter, its `dispatch` line appended to PROGRESS.md, and the dashboard re-rendered — **all before the `Agent` call goes out**, in a turn that contains no dispatch |
+| Verifier returns PASS | that task → `done` in both places; tick every `- [ ]` in its spec's `## Definition of Done` |
+| Verifier returns NEEDS-HUMAN | that task → `needs-human` in both places; tick the DoD items the verifier confirmed, leave the unverified ones unticked; add a row to PLAN.md `## Manual verification queue` (criterion · why unverified · manual steps). Dependents may still run |
+| A group's last task is verified | run that group's **integration gate** and tick its boxes from real output; a failing gate is reported as a planning gap, not silently carried into the next group |
 | Verifier returns FAIL (1st) | leave `in-progress`; journal the specific failure and the retry count in PROGRESS.md; if the cause can repeat elsewhere, append it to SYSTEM-CONTEXT.md § Lessons learned **before** re-dispatching |
 | 2nd FAIL, executor blocked, or a denied tool call | that task → `blocked` in both places; stop |
 | No tasks left | PLAN.md `Status:` → `done` (or `blocked`); tick the `## After execution` boxes — except the Manual verification queue box, which stays unticked until the user confirms those checks |
@@ -336,12 +401,16 @@ access to this workflow — uses to carry on, so keep it self-contained and abso
 
 ## Improving this skill — record, never self-edit
 
-Two different kinds of lesson come out of a run, and they must not be mixed:
+Three different kinds of lesson come out of a run, and they must not be mixed:
 
 | What went wrong | Where it goes | Who reads it |
 |---|---|---|
-| the **product's** code/conventions surprised an executor | `SYSTEM-CONTEXT.md` § Lessons learned | every later executor, automatically |
+| the **product's** code/conventions surprised an executor, in a way that matters to *this* feature | `SYSTEM-CONTEXT.md` § Lessons learned | every later executor of this feature, automatically |
+| the same, but it is a **durable fact about the codebase** — it will bite the next feature too | `<plans root>/LESSONS.md`, promoted at Phase 5 step 7 | Phase 3 of every later feature, which copies the relevant entries forward |
 | **this workflow** is what failed — a template lacks a field, an instruction is ambiguous enough that a cheap model drifted, a rule doesn't cover a case you hit | `<plans root>/SKILL-FEEDBACK.md` | a human, later, in the skill's source repo |
+
+Note what none of these is: the installed skill itself. Lessons accumulate in the *host's* files,
+never in `SKILL.md` — see below.
 
 **Never edit the installed skill during a run** — not `SKILL.md`, not `references/`, not
 `assets/`. Three reasons: this copy is downstream of a source repo and re-copying would silently
@@ -370,12 +439,19 @@ knows there is something to harvest — an entry nobody harvests is worth nothin
 The markdown files stay the source of truth: agents read and write those, and only those. On
 top of them, `scripts/render-dashboard.py` (stdlib Python 3, no dependencies) builds **one**
 derived file for the *user* — `plans/<slug>/dashboard.html`: task cards with status/risk/model
-badges, the parallel groups, testcases cross-linked to the tasks that cover them, the manual
-verification queue, and the HANDOFF block with a copy button. It also reads the PROGRESS.md
-journal back: each task card carries its own attempt/FAIL count and a timeline of what happened
-to it, tasks that failed or stalled get a **Needs attention** card, and § Lessons learned is
-hoisted out of SYSTEM-CONTEXT.md to the top. No agent ever reads that file, so
-it costs no tokens beyond a single Bash call.
+badges and a `DoD n/m` count, the execution groups, testcases cross-linked to the tasks that
+cover them, the manual verification queue, and the HANDOFF block with a copy button. It also
+reads the PROGRESS.md journal back: each task card carries its own re-run/FAIL count and a
+timeline of what happened to it, tasks that failed or stalled get a **Needs attention** card,
+and § Lessons learned is hoisted out of SYSTEM-CONTEXT.md to the top. No agent ever reads that
+file, so it costs no tokens beyond a single Bash call.
+
+Each task card leads with what a person reads — Objective, Definition of Done, Wiring,
+Self-check — and folds Context, Pattern to mirror, Constraints and Report format into a
+collapsed block: those exist for the executor, not the reader. The file is rebuilt on every
+write to a plan markdown file, so it is never stale on disk — but an already-open browser tab
+only shows the new state after the user reloads it. Say that once, rather than implying the tab
+updates itself.
 
 ```bash
 python3 <this-skill-dir>/scripts/render-dashboard.py <the plan dir, or any file in it> --quiet
@@ -429,6 +505,8 @@ that isn't quoted in it?* Fix any task where the answer is no.
   it, never read it.
 - `assets/SKILL-FEEDBACK-template.md` — copy to `<plans root>/SKILL-FEEDBACK.md` the first time
   this workflow itself proves defective. See **Improving this skill**.
+- `<plans root>/LESSONS.md` — *not* part of this package: it lives in the host and accumulates
+  across features. Read at Phase 3, appended at Phase 5 step 7.
 
 Dispatched by this skill (shipped alongside it): `task-executor` (Haiku), `task-executor-pro`
 (Sonnet), `task-verifier` (Sonnet), `task-verifier-pro` (Opus, `risk: high`).

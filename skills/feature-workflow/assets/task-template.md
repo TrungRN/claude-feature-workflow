@@ -2,6 +2,7 @@
 id: task-XXX
 title: <imperative one-liner>
 repo: <repo-dir-name>   # kb-workspace mode: exactly ONE repo. single-repo mode: omit or "."
+group: 1                # the shippable slice this task belongs to; must match PLAN.md § Groups
 depends_on: []          # e.g. [task-001]; drives ordering + parallelism
 files:                  # only what this task may create/modify, in the declared path convention
   - <path/to/file or ../<repo>/path/to/file>
@@ -22,11 +23,21 @@ status: todo            # todo | in-progress | done | blocked | needs-human — 
 ## Objective
 <1–2 sentences: what to build and why.>
 
-## Definition of Done   <!-- keep at top; each item must be concretely checkable -->
+## Definition of Done   <!-- keep at top; each item must be concretely checkable.
+     The boxes are ticked by the ORCHESTRATOR when the verifier returns PASS — never by the
+     executor, and never in advance. Unticked boxes on a `done` task mean something went wrong. -->
 - [ ] <observable outcome 1>
 - [ ] <observable outcome 2>
 - [ ] <the self-check command passes>
 - [ ] <covers testcases TC-x, TC-y from ./testcases.md, if applicable>
+
+## Wiring   <!-- REQUIRED whenever this task creates or exports something new.
+     No task may leave code that nothing calls: state the call site explicitly. -->
+- What this task adds: <function / component / endpoint / module>
+- Called from: <exact file + where — the route, screen, command, or existing caller this task
+  also edits — OR "task-00X in the same group, which imports it at <file>">
+- After this task (plus its group), the new code is reachable from: <entry point a user or a
+  test actually hits>
 
 ## Context   <!-- paste the ACTUAL current code inline; do not say "see file X" -->
 ```<lang>

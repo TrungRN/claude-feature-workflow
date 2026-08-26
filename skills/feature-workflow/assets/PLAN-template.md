@@ -29,7 +29,7 @@ _Drafted: <YYYY-MM-DD> · Status: draft | awaiting-approval | executing | done |
 ## Execution
 <!-- Set when the user approves, before the first dispatch. -->
 - Mode: task-by-task | by-group | all
-  <!-- How much runs between review pauses: one task · one parallel group · everything.
+  <!-- How much runs between review pauses: one task · one group (a shippable slice) · everything.
        The user can change this at any pause. -->
 - Progress journal + handoff: `./PROGRESS.md`
 - UI tooling: not needed | <server> installed (<scope>) | user declined <server> (<date>)
@@ -56,13 +56,14 @@ _Drafted: <YYYY-MM-DD> · Status: draft | awaiting-approval | executing | done |
 ## Tasks
 <!-- The orchestrator reads this table to sequence and dispatch work. This table is the SOURCE
      OF TRUTH for status; each task spec's `status:` frontmatter must be kept in sync with it.
-     Order producer/contract side before consumers. -->
+     Order producer/contract side before consumers. `group` = the slice this task belongs to
+     (see § Groups): every task of a group runs before that group's integration gate is checked. -->
 
-| id | title | repo | depends_on | model | risk | ui_verify | status |
-|----|-------|------|-----------|-------|------|-----------|--------|
-| task-001 | <title> | <repo-a> | — | haiku | low | none | todo |
-| task-002 | <title> | <repo-a> | task-001 | sonnet | high | none | todo |
-| task-003 | <title> | <repo-b> | task-002 | haiku | low | none | todo |
+| id | title | repo | group | depends_on | model | risk | ui_verify | status |
+|----|-------|------|-------|-----------|-------|------|-----------|--------|
+| task-001 | <title> | <repo-a> | 1 | — | haiku | low | none | todo |
+| task-002 | <title> | <repo-a> | 1 | task-001 | sonnet | high | none | todo |
+| task-003 | <title> | <repo-b> | 2 | task-002 | haiku | low | none | todo |
 
 `ui_verify`: `none` (default) | `browser` | `mobile`. The planner always writes `none`; only the
 user turns it on, at the approval gate, for the screens they think are worth the tokens.
@@ -71,9 +72,27 @@ user turns it on, at the approval gate, for the screens they think are worth the
 `needs-human` = code done and every command check green, but a user-visible criterion could not be
 machine-verified. It does **not** block dependents; it adds a row to the queue below.
 
-## Parallelization
-<!-- Groups of tasks with no shared files and no mutual dependency can run concurrently. -->
-- After task-001 completes: task-002 and task-003 can run in parallel.
+## Groups — each one is a shippable slice
+<!-- A group is BOTH the unit of parallelism and the unit of reviewable, pushable work. Tasks
+     inside a group have no shared files and no mutual dependency, so they run concurrently;
+     when the group finishes, the feature must be in a state the user can actually push:
+     no code that nothing calls, no import that nothing resolves. If a producer's only caller
+     lives in the next group, the two belong in the SAME group. -->
+
+### Group 1 — <what works end-to-end after this group>
+- Tasks: task-001, task-002
+- **Integration gate** (checked before reporting the group as finished):
+  - [ ] Reachable: <the new code is called from <entry point> — route/screen/command/exported API
+        already consumed in-repo>
+  - [ ] Demonstrable: <what a person can now do, or what test now exercises the slice end-to-end>
+  - [ ] No orphans: `<verbatim command that would flag dead code — lint / build / knip /
+        ts-prune / vulture / the project's own check>` → exits 0
+  - [ ] Pushable: the repo builds and its test suite passes with only this group's changes
+
+### Group 2 — <…>
+- Tasks: task-003
+- **Integration gate**:
+  - [ ] …
 
 ## Manual verification queue
 <!-- One row per NEEDS-HUMAN verdict. Only the user can clear these — the orchestrator must never

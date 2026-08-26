@@ -299,6 +299,47 @@ def sections(md):
     return out
 
 
+# What a person opening a task card actually wants: what it is, what "done" means, how to
+# check it. Everything else — the pasted code, the mirror pattern, the constraints — is detail
+# the executor needed and the reader rarely does, so it goes into a collapsed block.
+PRIMARY_SECTIONS = ("objective", "definition of done", "wiring", "self-check")
+
+
+def task_body_split(body):
+    """Split a task spec body into (primary, detail), each a list of (heading, body_md).
+
+    Headings are always English — the skill pins template structure to English even when the
+    prose is Vietnamese — so matching on them is safe in any plan language.
+    """
+    primary, detail = [], []
+    for name, chunk in sections(body):
+        low = name.strip().lower()
+        if not low:
+            if chunk.strip():
+                primary.append((-1, "", chunk))          # preamble stays first
+            continue
+        rank = None
+        for i, key in enumerate(PRIMARY_SECTIONS):
+            if low.startswith(key):
+                rank = i
+                break
+        if rank is None:
+            detail.append((name, chunk))
+        else:
+            primary.append((rank, name, chunk))
+    primary.sort(key=lambda s: s[0])
+    return [(name, chunk) for _, name, chunk in primary], detail
+
+
+def dod_progress(body):
+    """(ticked, total) over the Definition of Done checklist — the card's headline number."""
+    for name, chunk in sections(body):
+        if name.strip().lower().startswith("definition of done"):
+            boxes = re.findall(r"^\s*[-*+]\s*\[([ xX])\]", chunk, re.M)
+            return sum(1 for b in boxes if b.lower() == "x"), len(boxes)
+    return 0, 0
+
+
 def first_table(md):
     """Return [(header, [rows])] for the first pipe table in a chunk of markdown."""
     lines = (md or "").split("\n")
@@ -363,6 +404,7 @@ def parse_plan(plan_dir):
                     "id": tid,
                     "title": col("title"),
                     "repo": col("repo"),
+                    "group": col("group"),
                     "depends_on": deps,
                     "model": col("model").lower(),
                     "risk": col("risk").lower(),
@@ -412,6 +454,7 @@ def attach_specs(plan, plan_dir):
             deps = fm.get("depends_on") or []
             task = {
                 "id": tid, "title": str(fm.get("title", tid)), "repo": str(fm.get("repo", "")),
+                "group": str(fm.get("group", "")).strip(),
                 "depends_on": deps if isinstance(deps, list) else [],
                 "model": str(fm.get("model", "")).lower(), "risk": str(fm.get("risk", "")).lower(),
                 "ui_verify": str(fm.get("ui_verify", "none")).lower(),
@@ -423,12 +466,38 @@ def attach_specs(plan, plan_dir):
         task["spec"] = os.path.join("tasks", name)
         task["body"] = body
         task["fm"] = fm
+        if not str(task.get("group", "")).strip():
+            task["group"] = str(fm.get("group", "")).strip()
         if not task.get("title"):
             task["title"] = str(fm.get("title", tid))
         spec_status = norm_status(str(fm.get("status", "")))
         if fm.get("status") and spec_status != task["status"]:
             task["mismatch"] = "PLAN.md ghi `%s`, spec ghi `%s`" % (task["status"], spec_status)
     plan["tasks"].sort(key=lambda t: t["id"])
+
+
+def explicit_groups(tasks):
+    """[(label, [task…])] from the plan's own `group` column, or None when it has none.
+
+    A plan that declares its groups is stating an execution contract — each group ends in an
+    integrated, pushable state. That beats re-deriving lanes from `depends_on`, which only
+    describes ordering.
+    """
+    def key_of(t):
+        k = str(t.get("group", "")).strip()
+        return "" if k in ("—", "-") else k
+
+    if not any(key_of(t) for t in tasks):
+        return None
+    order, buckets = [], {}
+    for t in tasks:
+        k = key_of(t)
+        if k not in buckets:
+            buckets[k] = []
+            order.append(k)
+        buckets[k].append(t)
+    order.sort(key=lambda k: (k == "", int(k) if k.isdigit() else 0, k))
+    return [(k, buckets[k]) for k in order]
 
 
 def depth_levels(tasks):
@@ -682,6 +751,17 @@ button:hover{border-color:var(--accent);color:var(--accent)}
 .meta{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
 .deps{font-size:12.5px;color:var(--muted);margin:0 0 12px}
 .deps a{font-family:var(--mono);font-size:12px}
+.tag.dod{font-variant-numeric:tabular-nums}
+.tag.dod.done{color:var(--done);border-color:var(--done)}
+/* the executor's raw material: present, but folded away from the status read */
+.detail{margin-top:16px;border-top:1px solid var(--line);padding-top:12px}
+.detail>summary{cursor:pointer;list-style:none;font-size:12.5px;color:var(--muted);
+  display:flex;gap:7px;align-items:center}
+.detail>summary::-webkit-details-marker{display:none}
+.detail>summary::before{content:"▸";font-size:11px}
+.detail[open]>summary::before{content:"▾"}
+.detail>summary:hover{color:var(--accent)}
+.detail .body{margin-top:12px}
 /* lanes */
 .lanes{display:flex;gap:12px;overflow-x:auto;padding-bottom:6px}
 .lane{flex:none;min-width:150px;background:var(--panel2);border:1px solid var(--line);
@@ -761,7 +841,11 @@ JS = """
       if(!v){ d.hidden=false; return; }
       var hit=d.textContent.toLowerCase().indexOf(v)>-1;
       d.hidden=!hit;
-      if(hit && d.querySelector('.body').textContent.toLowerCase().indexOf(v)>-1) d.open=true;
+      if(!hit) return;
+      var body=d.querySelector('.body');
+      if(body && body.textContent.toLowerCase().indexOf(v)>-1) d.open=true;
+      var det=d.querySelector('details.detail');
+      if(det && det.textContent.toLowerCase().indexOf(v)>-1){ d.open=true; det.open=true; }
     });
   };
   var ex=document.getElementById('expand');
@@ -773,8 +857,12 @@ JS = """
   function openHash(){
     var h=location.hash.slice(1); if(!h) return;
     var el=document.getElementById(h); if(!el) return;
-    var d=el.closest?el.closest('details'):null; if(d) d.open=true;
     if(el.tagName==='DETAILS') el.open=true;
+    var p=el.parentNode;                       // open every enclosing <details>, not just one
+    while(p && p.nodeType===1){
+      if(p.tagName==='DETAILS') p.open=true;
+      p=p.parentNode;
+    }
     setTimeout(function(){el.scrollIntoView({block:'start'});},0);
   }
   addEventListener('hashchange',openHash); openHash();
@@ -812,12 +900,15 @@ STR = {
         "mismatch": "Status mismatch", "notasks": "No tasks in the PLAN.md table yet.",
         "of": "of", "donelabel": "done",
         "attention": "Needs attention — tasks that failed or stalled",
-        "activity": "What happened to this task", "attempts": "attempts",
+        "activity": "What happened to this task", "attempts": "runs",
         "lastfail": "last failure", "colwhen": "when", "colaction": "action",
         "colagent": "agent", "colnote": "note", "colstatus": "status", "coltask": "task",
         "lessons": "Lessons from failed attempts — every later executor reads these",
         "attention_nav": "Needs attention", "lessons_nav": "Lessons",
-        "retries": "re-runs",
+        "retries": "re-runs across the whole plan", "rerun": "re-run",
+        "detail": "Technical detail — context, pattern to mirror, constraints",
+        "dod": "DoD", "gate": "Integration gate",
+        "ungrouped": "Ungrouped",
     },
     "vi": {
         "overview": "Tổng quan", "tasks": "Task", "testcases": "Testcase",
@@ -832,12 +923,15 @@ STR = {
         "mismatch": "Lệch trạng thái", "notasks": "Bảng task trong PLAN.md chưa có dòng nào.",
         "of": "/", "donelabel": "xong",
         "attention": "Cần chú ý — task từng FAIL hoặc đang tắc",
-        "activity": "Diễn biến của task này", "attempts": "lượt chạy",
+        "activity": "Diễn biến của task này", "attempts": "số lần chạy",
         "lastfail": "lỗi lần cuối", "colwhen": "lúc", "colaction": "hành động",
         "colagent": "agent", "colnote": "ghi chú", "colstatus": "trạng thái", "coltask": "task",
         "lessons": "Bài học rút từ các lần FAIL — mọi executor sau đều đọc phần này",
         "attention_nav": "Cần chú ý", "lessons_nav": "Bài học",
-        "retries": "lượt chạy lại",
+        "retries": "lượt chạy lại toàn kế hoạch", "rerun": "chạy lại",
+        "detail": "Chi tiết kỹ thuật — context, pattern, ràng buộc",
+        "dod": "DoD", "gate": "Cổng tích hợp",
+        "ungrouped": "Chưa xếp nhóm",
     },
 }
 
@@ -923,12 +1017,12 @@ def emit(plan, plan_dir, out_path):
         p.append("<span>%s</span>" % esc(plan["drafted"]))
     p.append("<span>%d %s %s %s</span>" % (counts.get("done", 0), T["of"], len(tasks),
                                            esc(T["donelabel"])))
+    # Plan-wide total. Each task card shows its own share of this, so the numbers add up
+    # instead of looking like two different counts of the same thing.
     reruns = sum(max(0, st["attempts"] - 1) for st in stats.values())
     if reruns:
-        label = T["retries"]
-        if lang == "en" and reruns == 1:
-            label = label.rstrip("s")          # "1 re-run", not "1 re-runs"
-        p.append('<span class="pill blocked">%d %s</span>' % (reruns, esc(label)))
+        p.append('<span class="pill blocked" title="%s">%d %s</span>'
+                 % (esc(T["retries"]), reruns, esc(T["retries"])))
     p.append('<span>%s %s</span>' % (esc(T["generated"]),
                                      time.strftime("%Y-%m-%d %H:%M")))
     p.append("</div>")
@@ -1003,11 +1097,20 @@ def emit(plan, plan_dir, out_path):
     # ---- tasks
     if tasks:
         p.append('<section id="tasks"><h2 class="sh">%s</h2>' % esc(T["tasks"]))
-        lanes = depth_levels(tasks)
-        if len(lanes) > 1:
+        groups = explicit_groups(tasks)
+        if groups is None:
+            groups = [("", lane) for lane in depth_levels(tasks)]
+        if len(groups) > 1:
             p.append('<div class="card"><div class="lanes">')
-            for idx, lane in enumerate(lanes):
-                p.append('<div class="lane"><h4>%s %d</h4>' % (esc(T["group"]), idx + 1))
+            for idx, (key, lane) in enumerate(groups):
+                if not key:
+                    label = ("%s %d" % (T["group"], idx + 1) if explicit_groups(tasks) is None
+                             else T["ungrouped"])
+                elif key.isdigit():
+                    label = "%s %s" % (T["group"], key)
+                else:
+                    label = key
+                p.append('<div class="lane"><h4>%s</h4>' % esc(label))
                 for t in lane:
                     p.append('<a href="#%s"><i class="dot %s"></i>%s</a>'
                              % (t["id"], t["status"], esc(t["id"])))
@@ -1031,12 +1134,18 @@ def emit(plan, plan_dir, out_path):
                 p.append('<span class="%s">risk: %s</span>' % (cls, esc(t["risk"])))
             if t.get("ui_verify") and t["ui_verify"] not in ("none", "—", "-", ""):
                 p.append('<span class="tag ui">ui: %s</span>' % esc(t["ui_verify"]))
+            ticked, dod_total = dod_progress(t.get("body", ""))
+            if dod_total:
+                cls = "tag dod done" if ticked == dod_total else "tag dod"
+                p.append('<span class="%s">%s %d/%d</span>'
+                         % (cls, esc(T["dod"]), ticked, dod_total))
             st = stats.get(t["id"], {})
             if st.get("fails"):
                 p.append('<span class="tag fail">FAIL ×%d</span>' % st["fails"])
             if st.get("attempts", 0) > 1:
-                p.append('<span class="tag">⟲ %d %s</span>' % (st["attempts"],
-                                                               esc(T["attempts"])))
+                # re-runs, not total runs — so these add up to the counter in the header
+                p.append('<span class="tag">⟲ %s ×%d</span>'
+                         % (esc(T["rerun"]), st["attempts"] - 1))
             p.append("</span></summary>")
             if t.get("mismatch"):
                 p.append('<p class="warn">⚠︎ %s — %s</p>' % (esc(T["mismatch"]),
@@ -1064,7 +1173,21 @@ def emit(plan, plan_dir, out_path):
                          % (esc(T["activity"]),
                             html_table([T["colwhen"], T["colaction"], T["colagent"],
                                         T["colnote"]], rows)))
-            p.append('<div class="body">%s</div>' % md_to_html(t.get("body", "")))
+            primary, detail = task_body_split(t.get("body", ""))
+            if primary:
+                p.append('<div class="body">')
+                for name, chunk in primary:
+                    if name:
+                        p.append("<h3>%s</h3>" % inline(name))
+                    p.append(md_to_html(chunk))
+                p.append("</div>")
+            if detail:
+                p.append('<details class="detail"><summary>%s</summary><div class="body">'
+                         % esc(T["detail"]))
+                for name, chunk in detail:
+                    p.append("<h3>%s</h3>" % inline(name))
+                    p.append(md_to_html(chunk))
+                p.append("</div></details>")
             p.append("</details>")
         p.append("</section>")
     else:

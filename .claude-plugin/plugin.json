@@ -1,7 +1,7 @@
 {
   "$schema": "https://anthropic.com/claude-code/plugin.schema.json",
   "name": "feature-workflow",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "description": "Plan and execute a feature end-to-end: request -> plan -> testcases-before-code -> self-contained task specs executed by cheaper models -> independent verification. Ships the feature-workflow skill, the task-executor/task-verifier agents, and the dashboard hook.",
   "author": {
     "name": "TrungRN",

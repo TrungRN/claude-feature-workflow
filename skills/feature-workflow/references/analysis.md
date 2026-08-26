@@ -107,9 +107,14 @@ In single-repo mode, drop the per-repo split and the contracts section if there 
 - …
 
 ## Lessons learned
-<!-- Starts EMPTY. During execution the orchestrator appends one line per FAIL whose cause could
-     hit another task too (a convention, a lint rule, a gotcha the plan didn't state). Executors
-     run in isolated contexts and all read this file, so this is the only place a lesson
-     propagates. State each as a rule, not as a story about the task that hit it. -->
+<!-- Seeded at Phase 3 from `<plans root>/LESSONS.md` — the entries that apply to the repos this
+     feature touches, copied in verbatim (executors read this file and nothing else). Empty when
+     that file doesn't exist yet.
+     During execution the orchestrator appends one line per FAIL whose cause could hit another
+     task too (a convention, a lint rule, a gotcha the plan didn't state). Executors run in
+     isolated contexts and all read this file, so this is the only place a lesson propagates.
+     State each as a rule, not as a story about the task that hit it. At Phase 5 step 7 the
+     durable ones are promoted back to `<plans root>/LESSONS.md` for the next feature. -->
+- (carried from LESSONS.md · <repo>) <rule>
 - (task-00X) <rule a fresh executor can follow without knowing what happened>
 ```
