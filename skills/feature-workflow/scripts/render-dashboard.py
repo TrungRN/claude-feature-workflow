@@ -8,13 +8,18 @@ ever READS them and writes one derived file (dashboard.html). Nothing here costs
 tokens — it is deterministic, stdlib-only Python 3.8+.
 
 Usage:
-    render-dashboard.py <plans/<slug>/  |  any file inside it>   [--out PATH] [--quiet]
+    render-dashboard.py <plans/<slug>/ | any file inside it>  [--out PATH] [--quiet] [--no-tokens]
+
+Token usage per task is read from Claude Code's own subagent transcripts (see § Token
+accounting); `--no-tokens` skips that scan.
 
 Exits 0 and does nothing when the directory has no PLAN.md, so it is safe to wire into a
 PostToolUse hook that fires on every markdown write.
 """
 
+import glob
 import html
+import json
 import os
 import re
 import sys
@@ -358,7 +363,14 @@ def first_table(md):
 def norm_status(value):
     value = (value or "").strip().lower()
     value = re.sub(r"[`*_]", "", value)
-    return value if value in STATUS_LABEL else "todo"
+    if value in STATUS_LABEL:
+        return value
+    # Plans annotate the enum in passing — `done (degraded mode)`, `blocked (waiting on API)`.
+    # The leading word is still the status, and reading it as `todo` would report finished work
+    # as never started — and, now that tasks carry a cost, project a budget for work already paid
+    # for. Split on nothing that appears inside a status: `needs-human` keeps its hyphen.
+    head = re.split(r"[\s(,;:—]", value, maxsplit=1)[0]
+    return head if head in STATUS_LABEL else "todo"
 
 
 def parse_plan(plan_dir):
@@ -576,15 +588,23 @@ def action_pill(action):
     return '<span class="pill %s">%s</span>' % (cls, esc(action or "—"))
 
 
-def html_table(headers, rows):
-    """Same markup the markdown tables get, so narrow screens stack it identically."""
-    thead = "".join("<th>%s</th>" % esc(h) for h in headers)
+def html_table(headers, rows, numeric=(), sum_last=False):
+    """Same markup the markdown tables get, so narrow screens stack it identically.
+
+    `numeric` names the column indexes holding figures, so they right-align on a wide screen
+    and left-align again once the table stacks into cards on a phone. `sum_last` marks the
+    final row as a totals row.
+    """
+    thead = "".join('<th%s>%s</th>' % (' class="num"' if i in numeric else "", esc(h))
+                    for i, h in enumerate(headers))
     body = []
-    for row in rows:
-        cells = "".join('<td data-label="%s">%s</td>'
-                        % (esc(headers[i]) if i < len(headers) else "", cell)
+    for n, row in enumerate(rows):
+        cells = "".join('<td%s data-label="%s">%s</td>'
+                        % (' class="num"' if i in numeric else "",
+                           esc(headers[i]) if i < len(headers) else "", cell)
                         for i, cell in enumerate(row))
-        body.append("<tr>%s</tr>" % cells)
+        last = sum_last and n == len(rows) - 1
+        body.append('<tr%s>%s</tr>' % (' class="sum"' if last else "", cells))
     cls = "tw wide" if len(headers) >= 4 else "tw"
     return ('<div class="%s"><table><thead><tr>%s</tr></thead><tbody>%s</tbody></table></div>'
             % (cls, thead, "".join(body)))
@@ -601,6 +621,267 @@ def parse_progress(md):
 
 
 # --------------------------------------------------------------------------------------
+# Token accounting — read straight from Claude Code's own subagent transcripts
+#
+# Every subagent this workflow dispatches leaves a transcript of its own at
+#   <claude home>/projects/<encoded-cwd>/<session-id>/subagents/agent-<id>.jsonl
+# whose FIRST line is the prompt the orchestrator sent — and that prompt always contains the
+# absolute path of the task spec, because the skill mandates absolute paths. Its assistant
+# lines carry `message.usage`. So real per-task token usage is derivable here, deterministically,
+# without a single model token and without asking any agent to write a number down: nobody has
+# to remember, so nothing can be forgotten.
+#
+# Cost: one first-line read per transcript on the machine (milliseconds), then a full scan of
+# only the handful that belong to this plan. No cache, so nothing can go stale.
+# --------------------------------------------------------------------------------------
+
+SPEC_TASK_RE = re.compile(r"tasks[\\/](task-\d+)")
+ANY_TASK_RE = re.compile(r"\b(task-\d+)\b")
+
+# Per-run totals used only until this plan has actuals of its own to calibrate against.
+# Order of magnitude from observed runs — a starting point the numbers below replace, not a
+# promise. Both roles are counted because a task costs executor + verifier, not executor alone.
+BASELINE = {
+    ("executor", "haiku"): 180000,
+    ("executor", "sonnet"): 800000,
+    ("executor", "opus"): 1200000,
+    ("verifier", "low"): 400000,
+    ("verifier", "high"): 900000,
+}
+
+
+def fmt_tokens(n):
+    n = int(n or 0)
+    if n >= 10000000:
+        return "%.1fM" % (n / 1000000.0)
+    if n >= 1000000:
+        return "%.2fM" % (n / 1000000.0)
+    if n >= 10000:
+        return "%.0fk" % (n / 1000.0)
+    if n >= 1000:
+        return "%.1fk" % (n / 1000.0)
+    return str(n)
+
+
+def fmt_exact(n):
+    return "{:,}".format(int(n or 0))
+
+
+def _claude_home():
+    return os.environ.get("CLAUDE_CONFIG_DIR") or os.path.join(os.path.expanduser("~"), ".claude")
+
+
+def _agent_transcripts():
+    base = os.path.join(_claude_home(), "projects")
+    found = []
+    for pattern in ("*/*/subagents/agent-*.jsonl",
+                    "*/subagents/agent-*.jsonl",
+                    "*/agent-*.jsonl"):
+        found.extend(glob.glob(os.path.join(base, pattern)))
+    return found
+
+
+def _head(path, lines=2, cap=65536):
+    """The opening raw lines — enough to hold the dispatch prompt, capped so a pathological
+    transcript can't be pulled into memory whole. Runs once per transcript on the machine, so
+    it stays a bounded read and a substring test, never a parse."""
+    out = []
+    try:
+        with open(path, "r", encoding="utf-8", errors="replace") as fh:
+            for _ in range(lines):
+                chunk = fh.readline(cap)
+                if not chunk:
+                    break
+                out.append(chunk)
+    except (IOError, OSError):
+        return ""
+    return "".join(out)
+
+
+def _agent_meta(path):
+    """agentType/description from the .meta.json sidecar, when Claude Code wrote one."""
+    try:
+        with open(path[:-6] + ".meta.json", "r", encoding="utf-8") as fh:
+            data = json.load(fh)
+        return data if isinstance(data, dict) else {}
+    except (IOError, OSError, ValueError):
+        return {}
+
+
+def _role_of(agent_type, head):
+    blob = (agent_type or "").lower() or head[:4000].lower()
+    return "verifier" if "verif" in blob else "executor"
+
+
+def _scan_usage(path):
+    """(fresh, cached, out, model, calls) for one subagent transcript.
+
+    Streaming rewrites the same assistant message several times as it grows, so entries are
+    de-duplicated on `message.id`, keeping the largest — otherwise every long answer counts
+    two or three times over.
+    """
+    by_msg = {}
+    model = ""
+    try:
+        fh = open(path, "r", encoding="utf-8", errors="replace")
+    except (IOError, OSError):
+        return 0, 0, 0, "", 0
+    with fh:
+        for line in fh:
+            if '"usage"' not in line:
+                continue
+            try:
+                entry = json.loads(line)
+            except ValueError:
+                continue
+            if entry.get("type") != "assistant":
+                continue
+            msg = entry.get("message") or {}
+            usage = msg.get("usage") or {}
+            if not usage:
+                continue
+            model = msg.get("model") or model
+            fresh = (int(usage.get("input_tokens") or 0)
+                     + int(usage.get("cache_creation_input_tokens") or 0))
+            cached = int(usage.get("cache_read_input_tokens") or 0)
+            out = int(usage.get("output_tokens") or 0)
+            key = msg.get("id") or entry.get("requestId") or entry.get("uuid")
+            prev = by_msg.get(key)
+            if prev is None or fresh + cached + out > sum(prev):
+                by_msg[key] = (fresh, cached, out)
+    fresh = sum(v[0] for v in by_msg.values())
+    cached = sum(v[1] for v in by_msg.values())
+    out = sum(v[2] for v in by_msg.values())
+    return fresh, cached, out, re.sub(r"^claude-", "", model or ""), len(by_msg)
+
+
+def collect_tokens(plan_dir):
+    """{task-id: {runs, fresh, cached, out, total}} for every subagent run of this plan.
+
+    Empty on a machine that never ran the plan (a teammate opening the repo, a fresh clone) —
+    the page then simply shows no token numbers rather than wrong ones.
+    """
+    plan_abs = os.path.abspath(plan_dir).rstrip(os.sep)
+    plan_real = os.path.realpath(plan_abs)
+    # Fallback key for a plan reached through a different absolute path (symlinked workspace,
+    # moved checkout): `plans/<slug>`. Only used when no transcript matched the full path, so a
+    # same-named plan in another workspace can't quietly pollute the totals.
+    tail = os.path.join(os.path.basename(os.path.dirname(plan_abs)), os.path.basename(plan_abs))
+
+    exact, loose = [], []
+    for path in _agent_transcripts():
+        head = _head(path)
+        if not head or ('"isSidechain":true' not in head
+                        and '"isSidechain": true' not in head):
+            continue
+        if plan_abs in head or plan_real in head:
+            exact.append((path, head))
+        elif tail and tail in head:
+            loose.append((path, head))
+
+    per_task = {}
+    for path, head in (exact or loose):
+        m = SPEC_TASK_RE.search(head) or ANY_TASK_RE.search(head)
+        meta = _agent_meta(path)
+        if not m:
+            m = ANY_TASK_RE.search(str(meta.get("description", "")))
+        if not m:
+            continue
+        fresh, cached, out, model, calls = _scan_usage(path)
+        if fresh + cached + out == 0:
+            continue
+        agent_type = str(meta.get("agentType", ""))
+        try:
+            when = os.path.getmtime(path)
+        except OSError:
+            when = 0
+        entry = per_task.setdefault(m.group(1), {"runs": [], "fresh": 0, "cached": 0,
+                                                 "out": 0, "total": 0})
+        entry["runs"].append({
+            "agent": agent_type or _role_of("", head),
+            "role": _role_of(agent_type, head),
+            "model": model, "fresh": fresh, "cached": cached, "out": out,
+            "total": fresh + cached + out, "calls": calls, "when": when,
+        })
+        entry["fresh"] += fresh
+        entry["cached"] += cached
+        entry["out"] += out
+        entry["total"] += fresh + cached + out
+    for entry in per_task.values():
+        entry["runs"].sort(key=lambda r: r["when"])
+    return per_task
+
+
+def _tier(task):
+    model = (task.get("model") or "").strip().lower()
+    if "haiku" in model:
+        model = "haiku"
+    elif "opus" in model:
+        model = "opus"
+    else:
+        model = "sonnet"
+    risk = "high" if (task.get("risk") or "").strip().lower() == "high" else "low"
+    return model, risk
+
+
+def _median(values):
+    if not values:
+        return 0
+    ordered = sorted(values)
+    mid = len(ordered) // 2
+    if len(ordered) % 2:
+        return ordered[mid]
+    return (ordered[mid - 1] + ordered[mid]) // 2
+
+
+def estimate_tokens(tasks, actuals):
+    """What the tasks that have not run yet are likely to cost.
+
+    Calibrated on THIS plan's own finished runs — same repo, same conventions, same spec style —
+    which beats any fixed table. Built-in baselines only fill buckets the plan has no sample for,
+    and every estimate says which of the two it came from, so a projection built on guesses is
+    never presented as one built on measurements.
+    """
+    samples = {}
+    for task in tasks:
+        model, risk = _tier(task)
+        for run in actuals.get(task["id"], {}).get("runs", []):
+            key = ("verifier", risk) if run["role"] == "verifier" else ("executor", model)
+            samples.setdefault(key, []).append(run["total"])
+    role_pool = {}
+    for (role, _), values in samples.items():
+        role_pool.setdefault(role, []).extend(values)
+
+    def expect(role, tier):
+        if samples.get((role, tier)):
+            return _median(samples[(role, tier)]), "plan"
+        if role_pool.get(role):
+            return _median(role_pool[role]), "plan"
+        return BASELINE.get((role, tier), BASELINE[(role, "low" if role == "verifier"
+                                                    else "sonnet")]), "baseline"
+
+    out = {}
+    for task in tasks:
+        model, risk = _tier(task)
+        actual = actuals.get(task["id"], {})
+        roles = set(r["role"] for r in actual.get("runs", []))
+        remaining, basis = 0, ""
+        if task["status"] != "done":
+            for role, tier in (("executor", model), ("verifier", risk)):
+                if role in roles:
+                    continue
+                value, source = expect(role, tier)
+                remaining += value
+                if source == "baseline" or basis == "baseline":
+                    basis = "baseline"
+                else:
+                    basis = "plan"
+        out[task["id"]] = {"remaining": remaining, "basis": basis,
+                           "expected": actual.get("total", 0) + remaining}
+    return out
+
+
+# --------------------------------------------------------------------------------------
 # The page
 # --------------------------------------------------------------------------------------
 
@@ -614,6 +895,7 @@ CSS = """
   --human:#a35a06; --human-bg:#fdf1e0; --risk:#b91c1c;
   --shadow:0 1px 2px rgba(16,20,30,.05),0 8px 24px rgba(16,20,30,.06);
   --mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace;
+  --t-fresh:#4f46e5; --t-cache:#a5b4fc; --t-out:#6d63e8;
 }
 @media (prefers-color-scheme:dark){
   :root:not([data-theme=light]){
@@ -623,6 +905,7 @@ CSS = """
     --todo:#98a1b1; --todo-bg:#1e222c; --block:#ff8f8f; --block-bg:#2c1618;
     --human:#f0b45e; --human-bg:#2e2210; --risk:#ff8f8f;
     --shadow:0 1px 2px rgba(0,0,0,.3),0 8px 24px rgba(0,0,0,.25);
+    --t-fresh:#8b93f8; --t-cache:#454d7d; --t-out:#6a72d4;
   }
 }
 :root[data-theme=dark]{
@@ -632,6 +915,7 @@ CSS = """
   --todo:#98a1b1; --todo-bg:#1e222c; --block:#ff8f8f; --block-bg:#2c1618;
   --human:#f0b45e; --human-bg:#2e2210; --risk:#ff8f8f;
   --shadow:0 1px 2px rgba(0,0,0,.3),0 8px 24px rgba(0,0,0,.25);
+    --t-fresh:#8b93f8; --t-cache:#454d7d; --t-out:#6a72d4;
 }
 body{margin:0;background:var(--bg);color:var(--ink);
   font:15px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Roboto,"Helvetica Neue",sans-serif;
@@ -775,6 +1059,31 @@ button:hover{border-color:var(--accent);color:var(--accent)}
 .dot.done{background:var(--done)}.dot.in-progress{background:var(--prog)}
 .dot.todo{background:var(--todo)}.dot.blocked{background:var(--block)}
 .dot.needs-human{background:var(--human)}
+/* tokens */
+.toks{display:flex;flex-wrap:wrap;gap:4px 16px;margin-top:13px;align-items:baseline;
+  font-size:12.5px;color:var(--muted)}
+.toks b{color:var(--ink);font-size:15px;font-variant-numeric:tabular-nums;font-weight:700}
+.toks .est{color:var(--accent)}
+.toks .est b{color:var(--accent)}
+.tag.tok{font-variant-numeric:tabular-nums}
+.tag.tok.est{border-style:dashed;color:var(--accent);border-color:var(--accent)}
+.share{display:block;height:5px;border-radius:99px;background:var(--todo-bg);
+  margin:5px 0 1px;max-width:170px;overflow:hidden}
+td.num .share{margin-left:auto}
+.share .seg{display:flex;height:100%;border-radius:99px;overflow:hidden}
+.share i{display:block;height:100%}
+.share i.f{background:var(--t-fresh)}
+.share i.c{background:var(--t-cache)}
+.share i.o{background:var(--t-out)}
+.sw{display:inline-block;width:9px;height:9px;border-radius:3px;margin-right:4px}
+.sw.f{background:var(--t-fresh)}.sw.c{background:var(--t-cache)}.sw.o{background:var(--t-out)}
+.callout{border:1px solid var(--accent);background:var(--accent-soft);border-radius:10px;
+  padding:10px 13px;margin:0 0 14px;font-size:13px;line-height:1.55}
+.callout .keys{display:flex;flex-wrap:wrap;gap:4px 14px;margin-top:7px;color:var(--muted);
+  font-size:12px}
+td.num,th.num{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+tr.sum td{font-weight:700;background:var(--panel2)}
+.note{color:var(--muted);font-size:12px;margin:10px 2px 0}
 .foot{color:var(--muted);font-size:12px;text-align:center;padding:20px 0 0}
 .tools{position:fixed;bottom:14px;right:16px;display:flex;gap:6px;z-index:5}
 .tools button{background:var(--panel);box-shadow:var(--shadow)}
@@ -803,6 +1112,8 @@ button:hover{border-color:var(--accent);color:var(--accent)}
     text-transform:uppercase;letter-spacing:.04em;color:var(--muted);font-weight:600;
     margin-bottom:1px}
   .tw.wide td:not([data-label])::before,.tw.wide td[data-label=""]::before{display:none}
+  .tw.wide td.num{text-align:left}
+  .tw.wide td.num .share{margin-left:0}
   .tw.wide tr:target{background:var(--accent-soft);border-color:var(--accent)}
 }
 @media (max-width:600px){
@@ -909,6 +1220,29 @@ STR = {
         "detail": "Technical detail — context, pattern to mirror, constraints",
         "dod": "DoD", "gate": "Integration gate",
         "ungrouped": "Ungrouped",
+        "tokens": "Tokens", "tokused": "tokens used", "tokin": "fresh input",
+        "tokcache": "cache reads", "tokout": "output",
+        "tokproj": "projected total", "tokleft": "still to spend",
+        "tokruns": "Token usage — the agent runs behind this task",
+        "colused": "used", "colleft": "est. left", "colexp": "expected",
+        "colagenttype": "agent", "colmodel": "model", "coltotal": "total",
+        "colcalls": "API calls", "toktotal": "Whole feature",
+        "toknote": "Counted from the subagent transcripts Claude Code writes for each run — "
+                   "executor, verifier and every re-run of a task, including cache reads. "
+                   "The orchestrating session's own planning tokens are not attributed to any "
+                   "task, so the total is what execution cost, not what the conversation cost. "
+                   "Numbers are only present on the machine that ran the plan.",
+        "tokestnote": "Estimates (~) for what has not run yet, calibrated on this plan's own "
+                      "finished runs.",
+        "tokcachenote": "<b>{pct}% of these tokens are cache reads.</b> {cached} of {total} were "
+                        "read back from the prompt cache instead of being sent fresh, and a "
+                        "cache read is billed at roughly <b>0.1\u00d7</b> the normal input rate. "
+                        "Charged at full rate: {fresh} fresh input and {out} output. So a large "
+                        "total is not a large bill — the better the cache hits, the bigger this "
+                        "number grows while the cost falls.",
+        "tokroughnote": "Estimates (~) marked rough come from built-in baselines — this plan "
+                        "has no comparable finished run yet — and sharpen as tasks complete.",
+        "rough": "rough",
     },
     "vi": {
         "overview": "Tổng quan", "tasks": "Task", "testcases": "Testcase",
@@ -932,6 +1266,29 @@ STR = {
         "detail": "Chi tiết kỹ thuật — context, pattern, ràng buộc",
         "dod": "DoD", "gate": "Cổng tích hợp",
         "ungrouped": "Chưa xếp nhóm",
+        "tokens": "Token", "tokused": "token đã dùng", "tokin": "input mới",
+        "tokcache": "đọc cache", "tokout": "output",
+        "tokproj": "dự kiến tổng", "tokleft": "còn phải tiêu",
+        "tokruns": "Token đã dùng — các lượt agent chạy cho task này",
+        "colused": "đã dùng", "colleft": "ước tính còn", "colexp": "dự kiến",
+        "colagenttype": "agent", "colmodel": "model", "coltotal": "tổng",
+        "colcalls": "lượt gọi API", "toktotal": "Toàn bộ feature",
+        "toknote": "Đếm từ chính transcript mà Claude Code ghi cho mỗi lượt subagent — "
+                   "executor, verifier và mọi lần chạy lại của task, tính cả token đọc cache. "
+                   "Token của phiên điều phối (lúc lập plan, lúc trò chuyện) không gán vào task "
+                   "nào, nên con số tổng là chi phí THỰC THI, không phải chi phí cả cuộc hội "
+                   "thoại. Chỉ có số trên chính máy đã chạy plan.",
+        "tokestnote": "Số ~ là ước tính cho phần chưa chạy, hiệu chỉnh theo chính các lượt đã "
+                      "chạy xong của plan này.",
+        "tokcachenote": "<b>{pct}% chỗ token này là đọc cache.</b> {cached} / {total} token được "
+                        "đọc lại từ prompt cache chứ không gửi mới, mà một token đọc cache chỉ "
+                        "tính giá khoảng <b>0,1\u00d7</b> so với input thường. Phần trả giá đầy "
+                        "đủ chỉ có {fresh} input mới và {out} output. Nên tổng lớn không có nghĩa "
+                        "là đang tiêu nhiều — cache càng trúng thì con số này càng phình ra trong "
+                        "khi chi phí càng giảm.",
+        "tokroughnote": "Số ~ gắn nhãn “thô” lấy từ mức nền dựng sẵn — plan này chưa có lượt "
+                        "chạy nào tương đương để so — và sẽ sát dần khi có task xong.",
+        "rough": "thô",
     },
 }
 
@@ -944,10 +1301,18 @@ def pick_lang(plan):
     return "en"
 
 
+WANT_TOKENS = True
+
+
 def emit(plan, plan_dir, out_path):
     lang = pick_lang(plan)
     T = STR[lang]
     tasks = plan["tasks"]
+    tok = collect_tokens(plan_dir) if WANT_TOKENS else {}
+    est = estimate_tokens(tasks, tok) if (tasks and WANT_TOKENS) else {}
+    tok_used = sum(v["total"] for v in tok.values())
+    tok_left = sum(e["remaining"] for e in est.values())
+    tok_rough = any(e["basis"] == "baseline" and e["remaining"] for e in est.values())
     counts = dict((s, 0) for s in STATUS_ORDER)
     for t in tasks:
         counts[t["status"]] = counts.get(t["status"], 0) + 1
@@ -987,6 +1352,7 @@ def emit(plan, plan_dir, out_path):
                ("lessons", T["lessons_nav"], bool(lessons_body.strip())),
                ("overview", T["overview"], True),
                ("tasks", T["tasks"], bool(tasks)),
+               ("tokens", T["tokens"], bool(tok_used or tok_left)),
                ("testcases", T["testcases"], bool(testcases_md)),
                ("progress", T["progress"], bool(progress_md)),
                ("context", T["context"], bool(context_md))]
@@ -1039,6 +1405,29 @@ def emit(plan, plan_dir, out_path):
             if counts.get(s):
                 p.append('<span class="pill %s">%s %d</span>' % (s, esc(STATUS_LABEL[s]),
                                                                  counts[s]))
+        p.append("</div>")
+    if tok_used or tok_left:
+        # One place where the plan-wide numbers live; every task card shows its own share of
+        # exactly these, so the parts add up to the whole instead of reading as rival counts.
+        p.append('<div class="toks">')
+        if tok_used:
+            p.append('<span title="%s"><b>%s</b> %s</span>'
+                     % (esc(fmt_exact(tok_used)), esc(fmt_tokens(tok_used)), esc(T["tokused"])))
+            p.append("<span>%s %s · %s %s · %s %s</span>"
+                     % (esc(fmt_tokens(sum(v["fresh"] for v in tok.values()))), esc(T["tokin"]),
+                        esc(fmt_tokens(sum(v["cached"] for v in tok.values()))), esc(T["tokcache"]),
+                        esc(fmt_tokens(sum(v["out"] for v in tok.values()))), esc(T["tokout"])))
+        if tok_left:
+            rough = " (%s)" % esc(T["rough"]) if tok_rough else ""
+            if tok_used:
+                p.append('<span class="est" title="%s">~<b>%s</b> %s · ~%s %s%s</span>'
+                         % (esc(fmt_exact(tok_used + tok_left)),
+                            esc(fmt_tokens(tok_used + tok_left)), esc(T["tokproj"]),
+                            esc(fmt_tokens(tok_left)), esc(T["tokleft"]), rough))
+            else:
+                p.append('<span class="est" title="%s">~<b>%s</b> %s%s</span>'
+                         % (esc(fmt_exact(tok_left)), esc(fmt_tokens(tok_left)),
+                            esc(T["tokleft"]), rough))
         p.append("</div>")
     p.append("</header>")
 
@@ -1139,6 +1528,14 @@ def emit(plan, plan_dir, out_path):
                 cls = "tag dod done" if ticked == dod_total else "tag dod"
                 p.append('<span class="%s">%s %d/%d</span>'
                          % (cls, esc(T["dod"]), ticked, dod_total))
+            spent = tok.get(t["id"], {}).get("total", 0)
+            if spent:
+                p.append('<span class="tag tok" title="%s">⛁ %s</span>'
+                         % (esc(fmt_exact(spent)), esc(fmt_tokens(spent))))
+            left = est.get(t["id"], {}).get("remaining", 0)
+            if left:
+                p.append('<span class="tag tok est" title="%s">~%s</span>'
+                         % (esc(fmt_exact(left)), esc(fmt_tokens(left))))
             st = stats.get(t["id"], {})
             if st.get("fails"):
                 p.append('<span class="tag fail">FAIL ×%d</span>' % st["fails"])
@@ -1173,6 +1570,24 @@ def emit(plan, plan_dir, out_path):
                          % (esc(T["activity"]),
                             html_table([T["colwhen"], T["colaction"], T["colagent"],
                                         T["colnote"]], rows)))
+            runs = tok.get(t["id"], {}).get("runs", [])
+            if runs:
+                rows = [[esc(r["agent"] or "—"), "<code>%s</code>" % esc(r["model"] or "—"),
+                         esc(fmt_tokens(r["fresh"])), esc(fmt_tokens(r["cached"])),
+                         esc(fmt_tokens(r["out"])),
+                         '<span title="%s">%s</span>' % (esc(fmt_exact(r["total"])),
+                                                         esc(fmt_tokens(r["total"])))]
+                        for r in runs]
+                entry = tok[t["id"]]
+                rows.append([esc(T["coltotal"]), "", esc(fmt_tokens(entry["fresh"])),
+                             esc(fmt_tokens(entry["cached"])), esc(fmt_tokens(entry["out"])),
+                             '<span title="%s">%s</span>' % (esc(fmt_exact(entry["total"])),
+                                                             esc(fmt_tokens(entry["total"])))])
+                p.append('<div class="act"><h4>%s</h4>%s</div>'
+                         % (esc(T["tokruns"]),
+                            html_table([T["colagenttype"], T["colmodel"], T["tokin"],
+                                        T["tokcache"], T["tokout"], T["coltotal"]], rows,
+                                       numeric=(2, 3, 4, 5), sum_last=True)))
             primary, detail = task_body_split(t.get("body", ""))
             if primary:
                 p.append('<div class="body">')
@@ -1193,6 +1608,79 @@ def emit(plan, plan_dir, out_path):
     else:
         p.append('<section id="tasks"><h2 class="sh">%s</h2><div class="card"><p>%s</p></div>'
                  "</section>" % (esc(T["tasks"]), esc(T["notasks"])))
+
+    # ---- tokens: where the feature's execution budget actually went, task by task
+    if tok_used or tok_left:
+        peak = max([tok.get(t["id"], {}).get("total", 0) for t in tasks] + [1])
+        fresh_all = sum(v["fresh"] for v in tok.values())
+        cached_all = sum(v["cached"] for v in tok.values())
+        out_all = sum(v["out"] for v in tok.values())
+
+        def bar(entry):
+            """One quantity split three ways — so one hue in three shades, not three colours.
+            The width against the biggest task shows scale; the segments show what it is made
+            of, which is the whole point: a total dominated by pale cache is a cheap total."""
+            total = entry["total"] or 1
+            segs = "".join('<i class="%s" style="width:%.2f%%"></i>' % (cls, 100.0 * val / total)
+                           for cls, val in (("f", entry["fresh"]), ("c", entry["cached"]),
+                                            ("o", entry["out"])) if val)
+            return ('<span class="share"><span class="seg" style="width:%.2f%%">%s</span></span>'
+                    % (100.0 * entry["total"] / peak, segs))
+
+        def num(value):
+            return ('<span title="%s">%s</span>' % (esc(fmt_exact(value)), esc(fmt_tokens(value)))
+                    if value else "—")
+
+        rows = []
+        for t in tasks:
+            entry = tok.get(t["id"])
+            spent = entry["total"] if entry else 0
+            e = est.get(t["id"], {"remaining": 0, "basis": ""})
+            used_cell = num(spent) + (bar(entry) if spent else "")
+            left_cell = "—"
+            if e["remaining"]:
+                left_cell = '<span title="%s">~%s%s</span>' % (
+                    esc(fmt_exact(e["remaining"])), esc(fmt_tokens(e["remaining"])),
+                    " (%s)" % esc(T["rough"]) if e["basis"] == "baseline" else "")
+            expected = "—"
+            if spent or e["remaining"]:
+                expected = esc(("" if spent and not e["remaining"] else "~")
+                               + fmt_tokens(spent + e["remaining"]))
+            rows.append([
+                '<a href="#%s">%s</a> %s' % (esc(t["id"]), esc(t["id"]), esc(t["title"] or "")),
+                '<span class="pill %s">%s</span>' % (t["status"], esc(STATUS_LABEL[t["status"]])),
+                num(entry["fresh"]) if entry else "—",
+                num(entry["cached"]) if entry else "—",
+                num(entry["out"]) if entry else "—",
+                used_cell, left_cell, expected,
+            ])
+        rows.append([
+            "<b>%s</b>" % esc(T["toktotal"]), "",
+            num(fresh_all), num(cached_all), num(out_all), num(tok_used),
+            ("~%s" % esc(fmt_tokens(tok_left))) if tok_left else "—",
+            esc(("~" if tok_left else "") + fmt_tokens(tok_used + tok_left)),
+        ])
+        p.append('<section id="tokens"><h2 class="sh">%s</h2><div class="card">'
+                 % esc(T["tokens"]))
+        # The headline number is big and mostly cache. Say so before the table, not after it:
+        # a reader who has already decided the run was expensive won't read a footnote.
+        if cached_all:
+            p.append('<div class="callout">%s<div class="keys">'
+                     % T["tokcachenote"].format(
+                         pct="%.0f" % (100.0 * cached_all / (tok_used or 1)),
+                         cached=esc(fmt_tokens(cached_all)), total=esc(fmt_tokens(tok_used)),
+                         fresh=esc(fmt_tokens(fresh_all)), out=esc(fmt_tokens(out_all))))
+            for cls, label in (("f", T["tokin"]), ("c", T["tokcache"]), ("o", T["tokout"])):
+                p.append('<span><i class="sw %s"></i>%s</span>' % (cls, esc(label)))
+            p.append("</div></div>")
+        p.append(html_table([T["coltask"], T["colstatus"], T["tokin"], T["tokcache"],
+                             T["tokout"], T["colused"], T["colleft"], T["colexp"]],
+                            rows, numeric=(2, 3, 4, 5, 6, 7), sum_last=True))
+        p.append('<p class="note">%s</p>' % esc(T["toknote"]))
+        if tok_left:
+            p.append('<p class="note">%s</p>'
+                     % esc(T["tokroughnote"] if tok_rough else T["tokestnote"]))
+        p.append("</div></section>")
 
     # ---- testcases
     if testcases_md:
@@ -1243,8 +1731,10 @@ def resolve_plan_dir(target):
 
 
 def main(argv):
+    global WANT_TOKENS
     args = [a for a in argv[1:] if not a.startswith("--")]
     quiet = "--quiet" in argv
+    WANT_TOKENS = "--no-tokens" not in argv
     out = None
     if "--out" in argv:
         i = argv.index("--out")
@@ -1253,7 +1743,7 @@ def main(argv):
             args = [a for a in args if a != out]
     if not args:
         sys.stderr.write("usage: render-dashboard.py <plan-dir|file inside it> "
-                         "[--out PATH] [--quiet]\n")
+                         "[--out PATH] [--quiet] [--no-tokens]\n")
         return 2
     plan_dir = resolve_plan_dir(args[0])
     targets = [plan_dir] if plan_dir else []

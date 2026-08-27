@@ -377,6 +377,7 @@ Trong đó có:
 | Tiến độ | khối `HANDOFF` ghim sẵn kèm nút **Copy HANDOFF** (để dán sang AI khác), và nhật ký chạy |
 | Cần chú ý | thẻ đỏ liệt kê task từng `FAIL` hoặc đang tắc: chạy mấy lượt, fail mấy lần, **lỗi lần cuối là gì** |
 | Bài học | mục `Lessons learned` được kéo lên đầu trang — thứ mọi executor sau đều đọc |
+| Token | mỗi task tốn bao nhiêu token, cả feature tốn bao nhiêu, và phần chưa chạy **ước tính** còn tốn bao nhiêu |
 
 Riêng chuyện fail/chạy lại, mỗi thẻ task còn có: badge `FAIL ×2` · `⟲ chạy lại ×2` ngay trên đầu
 thẻ (nên nhìn danh sách là biết task nào trầy trật), và bên trong là **Diễn biến của task này** —
@@ -386,6 +387,55 @@ timeline dispatch → FAIL → dispatch (retry 1) → PASS kèm agent nào chạ
 Hai con số "chạy lại" **cùng một đơn vị**: badge trên mỗi thẻ là số lần chạy lại *của task đó*
 (chạy lần đầu = 0), còn con số ở đầu trang là **tổng của tất cả các thẻ**. Cộng badge của mọi
 task lại đúng bằng số ở đầu trang.
+
+### Token: task nào ngốn bao nhiêu
+
+Đầu trang có một dòng gọn: **`14.3M token đã dùng`** · tách ra `input mới / đọc cache / output` ·
+và `~18.4M dự kiến tổng · ~4.09M còn phải tiêu`. Mục **Token** ở thanh bên là bảng đầy đủ: mỗi
+task một dòng — `input mới` · `đọc cache` · `output` · `đã dùng` (kèm thanh so sánh chia màu theo
+đúng ba phần đó) · `ước tính còn` · `dự kiến` — và dòng cuối là tổng của cả feature. Mở một thẻ
+task ra thì có bảng chi tiết **từng lượt agent**: executor tốn bao nhiêu, verifier tốn bao nhiêu,
+model nào, cũng chia theo ba phần đó. Nhìn phát biết ngay task nào đắt, và đắt ở khâu viết code
+hay khâu kiểm tra.
+
+### Con số tổng lớn ≠ đang tiêu nhiều
+
+Đây là chỗ **dễ hiểu lầm nhất**, nên trang đặt hẳn một khối nổi ngay đầu mục Token, tính bằng số
+thật của chính plan đó:
+
+> **93% chỗ token này là đọc cache.** 13.3M / 14.3M token được đọc lại từ prompt cache chứ không
+> gửi mới, mà một token đọc cache chỉ tính giá khoảng **0,1×** so với input thường. Phần trả giá
+> đầy đủ chỉ có 845k input mới và 206k output.
+
+Lý do phải nói rõ: một task chạy tốt — cache trúng liên tục — sẽ có **tổng token to hơn** một
+task chạy tệ, trong khi **tốn ít tiền hơn**. Nhìn mỗi con số 14.3M mà không biết 93% là cache thì
+kết luận ngược hoàn toàn. Thanh so sánh trong cột `đã dùng` cũng chia màu theo ba phần (đậm =
+input mới, nhạt = đọc cache, vừa = output), nên liếc một cái là thấy phần đậm mới là phần đáng
+quan tâm.
+
+Bảng giá tham chiếu (giá so với input thường): đọc cache **~0,1×** · ghi cache **1,25×** (TTL 5
+phút) hoặc **2×** (TTL 1 giờ) · input chưa cache **1×**.
+
+Số đó **lấy ở đâu ra**: Claude Code vốn đã ghi transcript riêng cho mỗi lượt subagent
+(`~/.claude/projects/**/subagents/agent-*.jsonl`), trong đó có sẵn `usage` của từng lượt gọi API,
+và prompt điều phối luôn chứa **đường dẫn tuyệt đối** của file task spec. Script chỉ việc đọc
+ngược lại và cộng. Nghĩa là:
+
+- **Không agent nào phải ghi chép gì thêm** — không có bước nào để quên, không tốn token để đếm token.
+- **Tính cả** executor, verifier, và mọi lần chạy lại của task; **tính cả** token đọc cache
+  (nên con số tổng thường lớn — phần lớn là cache read, vốn rẻ hơn input mới nhiều).
+- **Không tính** token của phiên điều phối (lúc bạn bàn plan, lúc lập kế hoạch). Nên con số này
+  là **chi phí thực thi**, không phải chi phí cả cuộc hội thoại.
+- Chỉ có số **trên chính máy đã chạy plan**. Người khác clone repo về mở `dashboard.html` sẽ
+  không thấy phần token — trang vẫn hiện bình thường, chỉ thiếu mục đó.
+
+Còn **ước tính** (`~`) cho phần chưa chạy: lấy trung vị của chính các lượt đã chạy xong trong
+plan này, tách theo `model` (haiku/sonnet) cho executor và theo `risk` (low/high) cho verifier —
+cùng repo, cùng convention, cùng kiểu spec, nên sát hơn mọi bảng giá dựng sẵn. Plan chưa có lượt
+nào tương đương thì rơi về mức nền dựng sẵn và **được gắn nhãn `(thô)`**, rồi sát dần khi có task
+xong. Ước tính không bao giờ được trình bày như số đo thật.
+
+Không muốn quét transcript (máy nhiều dự án, hoặc chỉ muốn nhanh) thì thêm `--no-tokens`.
 
 **Thứ tự trong thẻ task theo cái bạn cần đọc**: Objective → Definition of Done → Wiring →
 Self-check hiện sẵn; còn Context (code dán vào), Pattern to mirror, Constraints, Report format —
@@ -411,6 +461,7 @@ Vài điểm đáng biết:
   ```bash
   python3 <thư-mục-skill>/scripts/render-dashboard.py plans/google-login
   # trỏ vào cả thư mục plans/ thì nó dựng lại cho mọi feature
+  # thêm --no-tokens nếu muốn bỏ qua phần đếm token
   ```
 
 - **Nó bắt lỗi lệch trạng thái**: nếu bảng task trong `PLAN.md` ghi `in-progress` mà frontmatter
@@ -688,6 +739,16 @@ cài từ marketplace local đó — nó đọc thẳng thư mục nên sửa fi
   một lệnh Bash. **File** thì realtime: hook `render-dashboard.sh` dựng lại ngay mỗi lần có ghi
   vào `plans/**.md`, kể cả subagent ghi. **Trình duyệt** thì không — F5 mới thấy bản mới.
   Xem mục 3d.
+- **Con số token trên dashboard có chính xác không?** Nó là số **đo được**, không phải ước lượng:
+  đọc thẳng `usage` trong transcript mà Claude Code ghi cho từng lượt subagent. Cần đọc đúng
+  phạm vi của nó: **có** executor + verifier + mọi lần chạy lại, **có** token đọc cache (nên tổng
+  trông lớn), **không có** token của phiên bạn ngồi bàn plan. Tức là chi phí *thực thi*, không
+  phải chi phí cả cuộc hội thoại. Riêng số gắn `~` là **ước tính** cho phần chưa chạy — và số nào
+  dựa trên mức nền dựng sẵn thì luôn kèm nhãn `(thô)`. Xem mục 3d.
+- **Thấy 14 triệu token thì có phải đang đốt tiền không?** Thường là không, và trang nói thẳng
+  điều đó ngay đầu mục Token: phần lớn con số đó là **đọc cache**, tính giá chỉ khoảng `0,1×` so
+  với input thường. Cứ nhìn cột `input mới` và `output` — đó mới là phần trả giá đầy đủ. Nghịch
+  lý cần nhớ: cache càng trúng thì tổng token càng phình to trong khi tiền càng giảm.
 - **Sao vẫn là markdown mà không phải HTML hết cho dễ đọc?** Vì hai loại độc giả khác nhau:
   bạn đọc `dashboard.html`, còn executor/verifier đọc markdown. Markdown tốn ít hơn HTML
   khoảng 2,5–3 lần token cho cùng nội dung, và 4 subagent nhận diện task spec qua đúng các

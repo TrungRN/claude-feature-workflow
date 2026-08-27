@@ -446,6 +446,19 @@ timeline of what happened to it, tasks that failed or stalled get a **Needs atte
 and § Lessons learned is hoisted out of SYSTEM-CONTEXT.md to the top. No agent ever reads that
 file, so it costs no tokens beyond a single Bash call.
 
+It also puts a **token cost** on every task and on the feature as a whole, read straight out of
+the subagent transcripts Claude Code already writes — executor, verifier and every re-run — so no
+agent has to record a number and none can be forgotten. Every figure is split into fresh input /
+cache reads / output, because the total is mostly cache reads and a cache read is billed at
+roughly 0.1× the normal input rate: a well-cached run shows a *bigger* token total than a badly
+cached one while costing less. The page states that share in its own numbers above the table
+rather than leaving the headline figure to be misread as overspending. Tasks that have
+not run yet get a `~` estimate calibrated on this plan's own finished runs (built-in baselines,
+labelled *rough*, only until the plan has a comparable run of its own). The orchestrating
+session's planning tokens are attributed to no task: the total is what **execution** cost, not
+what the conversation cost. The numbers only exist on the machine that ran the plan — elsewhere
+the page simply omits them. `--no-tokens` skips the scan.
+
 Each task card leads with what a person reads — Objective, Definition of Done, Wiring,
 Self-check — and folds Context, Pattern to mirror, Constraints and Report format into a
 collapsed block: those exist for the executor, not the reader. The file is rebuilt on every
@@ -467,6 +480,8 @@ python3 <this-skill-dir>/scripts/render-dashboard.py <the plan dir, or any file 
   including writes made by subagents.
 - No `python3` on the machine, or the script is missing → skip it and say so once. Nothing in
   this workflow depends on the dashboard.
+- It reads `~/.claude/projects/**/subagents/agent-*.jsonl` (or `$CLAUDE_CONFIG_DIR`) for the
+  token figures. Nothing there → no token numbers, everything else renders as before.
 
 If the executor/verifier agents are not available in this host (installed with the plugin, or
 copied into `.claude/agents/`), say so and offer: (a) install them from this package, or
